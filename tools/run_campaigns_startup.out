@@ -1,0 +1,72 @@
+Backing up existing campaign directories to /home/titan/aaron/CropCraft/work_dirs/ggssvt/backup_before_run_20260902_182858
+\n--- Starting plan smoke (chunk=16384, workers=8, batch=1) at Wed 02 Sep 2026 06:28:58 PM SAST ---
+Started pid 214773 for plan smoke; log: /home/titan/aaron/CropCraft/work_dirs/ggssvt/campaign_smoke.log
+OOM detected in plan smoke (pid 214773) at Wed 02 Sep 2026 06:29:28 PM SAST
+Plan smoke failed with OOM. Will attempt mitigation.
+Retrying plan smoke with reduced workers=4 and chunk=8192
+\n--- Starting plan smoke (chunk=8192, workers=4, batch=1) at Wed 02 Sep 2026 06:29:38 PM SAST ---
+Started pid 216648 for plan smoke; log: /home/titan/aaron/CropCraft/work_dirs/ggssvt/campaign_smoke.log
+OOM detected in plan smoke (pid 216648) at Wed 02 Sep 2026 06:30:08 PM SAST
+Plan smoke failed with OOM. Will attempt mitigation.
+\n--- Starting plan smoke (chunk=8192, workers=8, batch=1) at Wed 02 Sep 2026 06:30:08 PM SAST ---
+Started pid 217704 for plan smoke; log: /home/titan/aaron/CropCraft/work_dirs/ggssvt/campaign_smoke.log
+OOM detected in plan smoke (pid 217704) at Wed 02 Sep 2026 06:30:38 PM SAST
+Plan smoke failed with OOM. Will attempt mitigation.
+Retrying plan smoke with reduced workers=4 and chunk=4096
+\n--- Starting plan smoke (chunk=4096, workers=4, batch=1) at Wed 02 Sep 2026 06:30:48 PM SAST ---
+Started pid 219262 for plan smoke; log: /home/titan/aaron/CropCraft/work_dirs/ggssvt/campaign_smoke.log
+OOM detected in plan smoke (pid 219262) at Wed 02 Sep 2026 06:31:18 PM SAST
+Plan smoke failed with OOM. Will attempt mitigation.
+\n--- Starting plan smoke (chunk=4096, workers=8, batch=1) at Wed 02 Sep 2026 06:31:18 PM SAST ---
+Started pid 220954 for plan smoke; log: /home/titan/aaron/CropCraft/work_dirs/ggssvt/campaign_smoke.log
+OOM detected in plan smoke (pid 220954) at Wed 02 Sep 2026 06:31:48 PM SAST
+Plan smoke failed with OOM. Will attempt mitigation.
+Retrying plan smoke with reduced workers=4 and chunk=2048
+\n--- Starting plan smoke (chunk=2048, workers=4, batch=1) at Wed 02 Sep 2026 06:31:58 PM SAST ---
+Started pid 224424 for plan smoke; log: /home/titan/aaron/CropCraft/work_dirs/ggssvt/campaign_smoke.log
+OOM detected in plan smoke (pid 224424) at Wed 02 Sep 2026 06:32:28 PM SAST
+Plan smoke failed with OOM. Will attempt mitigation.
+Finished attempts for plan smoke
+\n--- Starting plan core (chunk=16384, workers=8, batch=1) at Wed 02 Sep 2026 06:32:28 PM SAST ---
+Started pid 226762 for plan core; log: /home/titan/aaron/CropCraft/work_dirs/ggssvt/campaign_core.log
+OOM detected in plan core (pid 226762) at Wed 02 Sep 2026 06:53:59 PM SAST
+Plan core failed with OOM. Will attempt mitigation.
+Retrying plan core with reduced workers=4 and chunk=8192
+\n--- Starting plan core (chunk=8192, workers=4, batch=1) at Wed 02 Sep 2026 06:54:09 PM SAST ---
+Started pid 330454 for plan core; log: /home/titan/aaron/CropCraft/work_dirs/ggssvt/campaign_core.log
+OOM detected in plan core (pid 330454) at Wed 02 Sep 2026 07:04:09 PM SAST
+Plan core failed with OOM. Will attempt mitigation.
+\n--- Starting plan core (chunk=8192, workers=8, batch=1) at Wed 02 Sep 2026 07:04:09 PM SAST ---
+Started pid 366841 for plan core; log: /home/titan/aaron/CropCraft/work_dirs/ggssvt/campaign_core.log
+OOM detected in plan core (pid 366841) at Wed 02 Sep 2026 07:04:39 PM SAST
+Plan core failed with OOM. Will attempt mitigation.
+Retrying plan core with reduced workers=4 and chunk=4096
+\n--- Starting plan core (chunk=4096, workers=4, batch=1) at Wed 02 Sep 2026 07:04:49 PM SAST ---
+Started pid 369152 for plan core; log: /home/titan/aaron/CropCraft/work_dirs/ggssvt/campaign_core.log
+OOM detected in plan core (pid 369152) at Wed 02 Sep 2026 07:14:49 PM SAST
+Plan core failed with OOM. Will attempt mitigation.
+\n--- Starting plan core (chunk=4096, workers=8, batch=1) at Wed 02 Sep 2026 07:14:49 PM SAST ---
+Started pid 395575 for plan core; log: /home/titan/aaron/CropCraft/work_dirs/ggssvt/campaign_core.log
+OOM detected in plan core (pid 395575) at Wed 02 Sep 2026 07:15:19 PM SAST
+Plan core failed with OOM. Will attempt mitigation.
+Retrying plan core with reduced workers=4 and chunk=2048
+\n--- Starting plan core (chunk=2048, workers=4, batch=1) at Wed 02 Sep 2026 07:15:29 PM SAST ---
+Started pid 397922 for plan core; log: /home/titan/aaron/CropCraft/work_dirs/ggssvt/campaign_core.log
+OOM detected in plan core (pid 397922) at Wed 02 Sep 2026 07:24:29 PM SAST
+Plan core failed with OOM. Will attempt mitigation.
+Finished attempts for plan core
+\n--- Starting plan full (chunk=16384, workers=8, batch=1) at Wed 02 Sep 2026 07:24:29 PM SAST ---
+Started pid 425362 for plan full; log: /home/titan/aaron/CropCraft/work_dirs/ggssvt/campaign_full.log
+OOM detected in plan full (pid 425362) at Wed 02 Sep 2026 07:24:59 PM SAST
+Plan full failed with OOM. Will attempt mitigation.
+Retrying plan full with reduced workers=4 and chunk=8192
+\n--- Starting plan full (chunk=8192, workers=4, batch=1) at Wed 02 Sep 2026 07:25:09 PM SAST ---
+Started pid 428668 for plan full; log: /home/titan/aaron/CropCraft/work_dirs/ggssvt/campaign_full.log
+Plan full log contains 'failed' lines; inspect /home/titan/aaron/CropCraft/work_dirs/ggssvt/campaign_full.log
+Plan full completed (no OOM detected) at Wed 02 Sep 2026 07:25:39 PM SAST
+\n--- Starting plan full (chunk=8192, workers=8, batch=1) at Wed 02 Sep 2026 07:25:39 PM SAST ---
+Started pid 430643 for plan full; log: /home/titan/aaron/CropCraft/work_dirs/ggssvt/campaign_full.log
+Plan full log contains 'failed' lines; inspect /home/titan/aaron/CropCraft/work_dirs/ggssvt/campaign_full.log
+Plan full completed (no OOM detected) at Wed 02 Sep 2026 07:26:09 PM SAST
+Finished attempts for plan full
+/home/titan/aaron/CropCraft/tools/run_campaigns.sh: line 133: syntax error near unexpected token `('

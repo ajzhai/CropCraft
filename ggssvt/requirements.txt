@@ -1,0 +1,52 @@
+# GG-SSVT runtime dependencies.
+#
+# Deliberately minimal, and deliberately SEPARATE from the repository root
+# requirements.txt. The root file pins the Nerfstudio stack (torch 2.0.1+cu118,
+# tiny-cuda-nn, Python 3.8); GG-SSVT needs modern torch and transformers >= 4.56
+# for the DINOv3 and SAM model classes, which will not install on Python 3.8.
+# Trying to satisfy both in one environment fails. Use two -- see RUNBOOK.md.
+#
+# Install torch FIRST, from the CUDA index, then this file:
+#
+#   pip install torch==2.5.1 torchvision==0.20.1 \
+#       --index-url https://download.pytorch.org/whl/cu121
+#   pip install -r ggssvt/requirements.txt
+#
+# cu121 wheels cover the RTX 4070/4080 (Ada, sm_89). cu118 also works but is
+# slower on Ada; do not use a CPU-only wheel or every GPU command silently falls back.
+
+# --- core: the geometry half needs only these two -------------------------
+numpy>=1.24,<3
+pillow>=10.0
+
+# --- model, training, evaluation ------------------------------------------
+# Not pinned to a CUDA build here on purpose: pip cannot select one from PyPI.
+# Install it from the index URL above before this file.
+torch>=2.4,<3
+torchvision>=0.19,<1
+
+# --- DINOv2 / DINOv3 / SAM backbones --------------------------------------
+# 4.56 is the floor for the DINOv3 model class. Optional: the `cnn` (no-DINO)
+# condition and the whole geometry pipeline run without these.
+transformers>=4.56
+huggingface_hub>=0.26
+safetensors>=0.4
+
+# --- development ----------------------------------------------------------
+pytest>=7.0
+ruff>=0.6
+
+# Mesh arm (marching cubes, convex hull). Optional: everything else runs
+# without it, and `ggssvt.cli mesh` reports what to install if it is absent.
+scikit-image>=0.22
+scipy>=1.11
+
+# Alternative regressors (random forest, gradient boosting, MLP), used to show
+# that swapping the estimator resolves nothing while the reconstruction is the
+# constraint. Optional: `cli preflight` reports it as degraded rather than fatal.
+scikit-learn>=1.3
+
+# Pose-free reconstruction (DUSt3R / MASt3R / Fast3R) is NOT pip-installable and
+# is deliberately absent here. Each needs its GitHub repository cloned with
+# submodules, plus a GPU. Run `python -m ggssvt.cli posefree --check-only` for
+# per-backend instructions. Everything else works without them.

@@ -1,3 +1,24 @@
+> ## This fork adds [`ggssvt/`](ggssvt/README.md)
+>
+> **Automated Biomass Estimation Using Self-Supervised Vision Transformers.** An
+> MEng dissertation by Aaron Masuba, supervised by Prof. Herman Myburgh with
+> Prof. Allan De Freitas and Dr Kealeboga Mokise, in the Smart Sensing and
+> Intelligent Systems Group, Department of Electrical, Electronic and Computer
+> Engineering, University of Pretoria.
+>
+> It works from its own dual-Kinect single-plant captures in
+> [`dataset/`](dataset/), not the CropCraft field data, and runs independently of
+> the Nerfstudio pipeline below, needing only NumPy, Pillow and PyTorch. The
+> vendored Nerfstudio is shared and everything upstream is unchanged.
+>
+> ```bash
+> python -m ggssvt.cli inspect
+> ```
+>
+> Start at [`ggssvt/README.md`](ggssvt/README.md).
+
+---
+
 # CropCraft: Complete Structural Characterization of Crop Plants From Images
 
 Albert J. Zhai, Xinlei Wang, Kaiyuan Li, Zhao Jiang, Junxiong Zhou, Sheng Wang, Zhenong Jin, Kaiyu Guan, Shenlong Wang<br/>
@@ -21,13 +42,22 @@ conda activate cropcraft
 pip install --upgrade pip
 ```
 
-Install PyTorch with CUDA and tiny-cuda-nn:
+Install PyTorch with CUD and tiny-cuda-nn:
 ```bash
 pip install torch==2.0.1+cu118 torchvision==0.15.2+cu118 --extra-index-url https://download.pytorch.org/whl/cu118
 
 conda install -c "nvidia/label/cuda-11.8.0" cuda-toolkit
 pip install ninja git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch
 ```
+
+> [!NOTE]
+> This step requires a working NVIDIA driver (check with `nvidia-smi`). The `cuda-toolkit` conda package only installs the compiler (`nvcc`) and headers, not the driver itself — on Ubuntu, install it with `sudo apt install nvidia-driver-<version>` (see `ubuntu-drivers devices` for the recommended version) and reboot before continuing.
+>
+> If `pip install tiny-cuda-nn` fails with `error: #error -- unsupported GNU version! gcc versions later than 11 are not supported!`, your system's default GCC is too new for CUDA 11.8's `nvcc` (this affects Ubuntu 22.04+ and 24.04, which ship GCC ≥ 12). Fix it by installing GCC 11 alongside your default compiler and pointing `nvcc` at it for this one build:
+> ```bash
+> sudo apt install gcc-11 g++-11
+> NVCC_PREPEND_FLAGS='-ccbin /usr/bin/g++-11' pip install ninja git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch
+> ```
 
 Install Nerfstudio:
 ```bash
@@ -80,6 +110,12 @@ python visualize.py --scene_name 20230801_S1
 python evaluate.py --scene_name 20230801_S1
 ```
 The visualization and evaluation scripts can be executed in any order.
+
+## GG-SSVT
+
+See the note at the top of this file. [`ggssvt/README.md`](ggssvt/README.md) has
+the pipeline, the evaluation protocol, the results and the known limitations of
+the capture set.
 
 ## Citation
 If you find this paper and repository useful, please consider citing:

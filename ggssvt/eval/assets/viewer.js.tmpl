@@ -1,0 +1,1715 @@
+const D = __PAYLOAD__;
+const S = D.specimens, byId = new Map(S.map(s => [s.id, s]));
+let current = S[0].id, colourMode = "segment";
+let viewerCmap = "viridis", viewerDot = 3;
+// Registry order, so the geometric carve is the default rather than whatever
+// sorts first alphabetically.
+let segmenter = (D.summary.methods_available || D.summary.segmenters)[0];
+let yaw = 0.62, pitch = 0.2, zoom = 0.9;
+
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const hex = h => { h=h.replace("#",""); if(h.length===3) h=h.split("").map(c=>c+c).join("");
+  return [parseInt(h.slice(0,2),16),parseInt(h.slice(2,4),16),parseInt(h.slice(4,6),16)]; };
+const mix = (a,b,t) => Math.round(a+(b-a)*t);
+
+/* Viridis, read from the ten CSS stops and interpolated. Sampled once at load
+   rather than per point: getComputedStyle inside the draw loop would dominate
+   the frame time for a 20,000-point cloud. */
+const VIRIDIS = Array.from({length:10}, (_,i) => hex(css("--v"+i)));
+function viridis(t){
+  t = t < 0 ? 0 : (t > 1 ? 1 : t);
+  const x = t * (VIRIDIS.length - 1);
+  const i = Math.min(VIRIDIS.length - 2, Math.floor(x)), k = x - i;
+  const a = VIRIDIS[i], b = VIRIDIS[i+1];
+  return [mix(a[0],b[0],k), mix(a[1],b[1],k), mix(a[2],b[2],k)];
+}
+const rgb = c => `rgb(${c[0]},${c[1]},${c[2]})`;
+
+/* Two more sequential ramps, and the reason for offering them is not
+   decoration. Viridis compresses its light end, so on a tall specimen the few
+   points at the top of a thin stem land in a narrow band of yellow and are hard
+   to separate from each other; plasma spreads that end further. Greys is there
+   for the opposite case, a figure going into print where hue is unavailable. */
+const PLASMA = [[13,8,135],[84,2,163],[139,10,165],[185,50,137],
+                [219,92,104],[244,136,73],[254,188,43],[240,249,33]];
+const GREYS  = [[214,214,216],[24,24,27]];
+
+function lerpRamp(stops, t){
+  t = t < 0 ? 0 : (t > 1 ? 1 : t);
+  const x = t * (stops.length - 1);
+  const i = Math.min(stops.length - 2, Math.floor(x)), k = x - i;
+  const a = stops[i], b = stops[i+1];
+  return [mix(a[0],b[0],k), mix(a[1],b[1],k), mix(a[2],b[2],k)];
+}
+function ramp(t, cmap){
+  if (cmap === "plasma") return lerpRamp(PLASMA, t);
+  if (cmap === "greys")  return lerpRamp(GREYS, t);
+  return viridis(t);
+}
+const f = (v,d=2) => (v===null||v===undefined||Number.isNaN(v)) ? ", " : Number(v).toFixed(d);
+
+async function inflate(b64){
+  const bin = Uint8Array.from(atob(b64), c=>c.charCodeAt(0));
+  if (typeof DecompressionStream === "undefined") return null;
+  const st = new Blob([bin]).stream().pipeThrough(new DecompressionStream("deflate"));
+  return new Uint8Array(await new Response(st).arrayBuffer());
+}
+
+const cache = new Map();
+async function cloud(id, seg){
+  const key = id+"/"+seg, e = byId.get(id).clouds[seg];
+  if (cache.has(key)) return cache.get(key);
+  if (!e) { cache.set(key,null); return null; }
+  const out = await decodeCloud(e, id);
+  cache.set(key,out); return out;
+}
+
+/* The same bytes-to-points step, without the specimen lookup. The Pheno4D
+   arms are not specimens and have no quality record or pot rim, so they
+   cannot go through cloud(). */
+async function decodeCloud(e, id, sharedFrame){
+  const bytes = await inflate(e.data);
+  let out = null;
+  if (bytes){
+    const n = Math.floor(bytes.length/3);
+    const pts = new Float32Array(n*3), h = new Float32Array(n);
+    let lo=[255,255,255], hi=[0,0,0];
+    for(let i=0;i<n;i++) for(let a=0;a<3;a++){
+      const v=bytes[i*3+a]; if(v<lo[a])lo[a]=v; if(v>hi[a])hi[a]=v; }
+    /* Per-cloud extent is right for one specimen on its own and wrong for
+       panels read against each other: a carve half the height of its own
+       segmentation would fill its panel just as fully, and the comparison the
+       panels exist for would be lost. sharedFrame scales every cloud by the
+       grid instead, so a shorter reconstruction draws shorter. */
+    const span = sharedFrame ? 255
+      : Math.max(1, hi[0]-lo[0], hi[1]-lo[1], hi[2]-lo[2]);
+    const mid = sharedFrame ? [127.5, 127.5, 127.5]
+      : [(lo[0]+hi[0])/2,(lo[1]+hi[1])/2,(lo[2]+hi[2])/2];
+    /* The encoder states the height of one byte. The old guess here,
+       resolution * 0.024 / 255, was wrong for every caller: it assumed the byte
+       range is fully used when the step is an integer division, and it assumed a
+       24 mm pitch that only holds when the payload was downsampled by two. */
+    const metresPerByte = e.metres_per_byte != null
+      ? e.metres_per_byte : (e.resolution * 0.024) / 255;
+    for(let i=0;i<n;i++){
+      pts[i*3]   = (bytes[i*3]  -mid[0])/span;
+      pts[i*3+1] = (bytes[i*3+1]-mid[1])/span;
+      pts[i*3+2] = (bytes[i*3+2]-mid[2])/span + 0.5;
+      h[i] = bytes[i*3+2] * metresPerByte;
+    }
+    out = {pts, h, n, id};
+  }
+  return out;
+}
+
+/* Each specimen's own rim. Pot mass spans 0.7-32 kg across the batches, so one
+   shared cut height puts the pot/canopy boundary in the wrong place for most of
+   them. Falls back to the configured constant where no rim was detectable. */
+function potHeight(c){
+  const s = c ? byId.get(c.id) : null;
+  const q = s && s.quality ? s.quality[segmenter] : null;
+  if (q && q.pot_height_m != null) return q.pot_height_m;
+  if (s && s.pot_height_m != null) return s.pot_height_m;
+  return D.summary.pot_height_m;
+}
+
+function draw(canvas, c, {dot=3, mode=colourMode, cmap="viridis", rim=null,
+                         yawL=yaw, pitchL=pitch, zoomL=zoom}={}){
+  const ctx = canvas.getContext("2d"), dpr = Math.min(devicePixelRatio||1,2);
+  const w = canvas.clientWidth, hgt = canvas.clientHeight;
+  if (!w || !hgt) return;
+  if (canvas.width !== Math.round(w*dpr)){ canvas.width=Math.round(w*dpr); canvas.height=Math.round(hgt*dpr); }
+  ctx.setTransform(dpr,0,0,dpr,0,0); ctx.clearRect(0,0,w,hgt);
+  if(!c){ ctx.fillStyle=css("--ink-3"); ctx.font="13px 'Noto Sans',sans-serif";
+    ctx.textAlign="center"; ctx.fillText("not reconstructed",w/2,hgt/2); return; }
+
+  const cy=Math.cos(yawL), sy=Math.sin(yawL), cp=Math.cos(pitchL), sp=Math.sin(pitchL);
+  const P = new Float32Array(c.n*3);
+  for(let i=0;i<c.n;i++){
+    const x=c.pts[i*3], y=c.pts[i*3+1], z=c.pts[i*3+2]-0.5;
+    const rx=x*cy+y*sy, rz=-x*sy+y*cy;
+    P[i*3]=rx; P[i*3+1]=z*cp-rz*sp; P[i*3+2]=z*sp+rz*cp;
+  }
+  const ord = Array.from({length:c.n},(_,i)=>i).sort((a,b)=>P[a*3+2]-P[b*3+2]);
+  const scale = Math.min(w,hgt)*zoomL;
+  let dmin=Infinity,dmax=-Infinity;
+  for(let i=0;i<c.n;i++){const d=P[i*3+2]; if(d<dmin)dmin=d; if(d>dmax)dmax=d;}
+  const dspan = Math.max(1e-6,dmax-dmin);
+
+  /* Height above the floor, which is what "colour by height" means. It is not
+     the same as depth from the camera: depth turns as you drag the specimen and
+     height does not, so a stem stays the same colour whichever way you look. */
+  let hmin=Infinity,hmax=-Infinity;
+  if(c.h) for(let i=0;i<c.n;i++){const v=c.h[i]; if(v<hmin)hmin=v; if(v>hmax)hmax=v;}
+  const hspan = Math.max(1e-6,hmax-hmin);
+  const cc=hex(css("--canopy")), pc=hex(css("--pot"));
+  /* An explicit split beats the lookup. The stage panels key their clouds by
+     specimen *and stage*, so the id never matched the specimen table and every
+     panel silently fell back to the global 0.28 m constant: pot colour to 0.28
+     regardless of whether that specimen's rim was at 0.228 or on a stand. */
+  const pot = rim != null ? rim : potHeight(c);
+
+  for(const i of ord){
+    const sx=w/2+P[i*3]*scale, sv=hgt/2-P[i*3+1]*scale;
+    const t=(P[i*3+2]-dmin)/dspan;
+    let col;
+    if(mode==="segment" || mode==="solid"){
+      const base = (mode==="solid" || c.h[i] > pot) ? cc : pc;
+      const k = 0.55+0.45*t;
+      col = `rgb(${Math.round(base[0]*k)},${Math.round(base[1]*k)},${Math.round(base[2]*k)})`;
+    } else {
+      col = rgb(ramp(mode==="z" && c.h ? (c.h[i]-hmin)/hspan : t, cmap));
+    }
+    ctx.fillStyle=col; ctx.fillRect(sx,sv,dot,dot);
+  }
+}
+
+function drawSlices(c){
+  const host = document.getElementById("slices"); host.innerHTML="";
+  if(!c) return;
+  const pot = potHeight(c);
+  const hmax = Math.max(...c.h);
+  const bands = 6, step = hmax/bands;
+  for(let b=0;b<bands;b++){
+    const lo=b*step, hi=(b+1)*step;
+    const cell=document.createElement("div"); cell.className="slice";
+    const cv=document.createElement("canvas"); cv.width=180; cv.height=180;
+    const cap=document.createElement("span");
+    cell.appendChild(cv); cell.appendChild(cap); host.appendChild(cell);
+
+    const ctx=cv.getContext("2d");
+    ctx.fillStyle="#f5f5f5"; ctx.fillRect(0,0,180,180);
+    const isCanopy = lo >= pot;
+    // Position along the ramp, so the strip reads bottom-to-top as one gradient
+    // and the pot/canopy boundary still shows through the marker below.
+    ctx.fillStyle = rgb(viridis(hmax > 0 ? (lo + hi) / 2 / hmax : 0));
+    let count=0;
+    for(let i=0;i<c.n;i++){
+      if(c.h[i]<lo||c.h[i]>=hi) continue;
+      const x=90+c.pts[i*3]*150, y=90+c.pts[i*3+1]*150;
+      ctx.fillRect(x,y,2,2); count++;
+    }
+    if(!count){ ctx.fillStyle="#b5b5b5"; ctx.font="11px 'Noto Sans',sans-serif";
+      ctx.textAlign="center"; ctx.fillText("empty",90,92); }
+    cap.textContent = `${lo.toFixed(2)}–${hi.toFixed(2)} m · ${isCanopy?"canopy":"pot"}`;
+  }
+}
+
+function pipeline(){
+  const stages=[
+    ["Acquisition","Two Kinect v2 units carried through six positions; twelve registered RGB-D frames per plant."],
+    ["Registration","Floor plane per view gives tilt, roll and height; the subject axis fixes the origin. No calibration target exists."],
+    ["Segmentation","A cylinder about the plant axis, optionally refined by SAM and made consistent across views."],
+    ["Carving","Silhouette and depth carving to a 128³ occupancy field. This is the self-supervision target."],
+    ["Mesh","Marching cubes, then surface area, enclosed volume and solidity."],
+    ["Biomass","Volume and shape read for above-ground mass, scored leave-one-out."]];
+  document.getElementById("pipe").innerHTML = stages.map(([t,d])=>
+    `<div class="stage"><b>${t}</b><span>${d}</span></div>`).join("");
+}
+
+function methodTable(){
+  const ref = D.summary.reference_method;
+  /* The smallest difference each row's own design could have found, so a null
+     can be read. Without it eight "not resolved" tags look like eight failures
+     to choose between methods, when they are one fact about the sample size. */
+  const mde = new Map();
+  for (const c of (D.resolution ? D.resolution.comparisons : []))
+    if (c.detectable && c.question.endsWith(`against ${ref}, on mass`))
+      mde.set(c.question.split(" against ")[0], c.detectable);
+
+  const head = `<thead><tr><th>Method</th><th>RMSE kg</th><th>MAE kg</th>
+    <th>MARE %</th><th>R²</th><th>vs ${ref}</th>
+    <th>this design can detect</th></tr></thead>`;
+  const rows = D.methods.map((m, i) => {
+    const x = m.vs_reference;
+    const cell = m.name === ref ? '<span class="has-text-grey">reference</span>'
+      : x ? `${x.difference > 0 ? "+" : ""}${f(x.difference, 3)}
+             <span class="tag is-small ${x.resolved ? "is-success" : "is-light"}">${
+               x.resolved ? "resolved" : "not resolved"}</span>`
+          : "n/a";
+    return `<tr class="${i === 0 ? "best" : ""}"><td>${m.name}</td>
+      <td>${f(m.rmse_kg, 3)}</td><td>${f(m.mae_kg, 3)}</td>
+      <td>${f(m.mare_pct, 1)}</td><td>${f(m.r2, 3)}</td>
+      <td>${cell}</td>
+      <td class="has-text-grey">${mde.get(m.name) || ""}</td></tr>`;
+  }).join("");
+  document.getElementById("methods").innerHTML = head + `<tbody>${rows}</tbody>`;
+
+  const R = D.resolution;
+  const note = document.getElementById("methodsresolution");
+  if (note && R && R.biomass_table){
+    const b = R.biomass_table;
+    note.innerHTML =
+      `The largest difference in this table is
+       <strong>${b.largest_observed_difference_kg} kg</strong>. The smallest one
+       this design can detect, at 80% power, is
+       <strong>${b.smallest_detectable_difference_kg} kg</strong>. So the eight
+       nulls are one fact about the sample size and not eight about the methods,
+       and no method here is distinguishable from predicting the mean.`;
+  }
+}
+
+/* The ledger. Every comparison the project has made, resolved and unresolved in
+   one place, because the resolved ones live in six different report files and
+   the unresolved ones all live in the table above. Read apart they suggest
+   nothing settled; read together the pattern is that paired counts and paired
+   differences on large samples settle, and RMSE differences on 36 specimens do
+   not. */
+function resolutionSection(){
+  const R = D.resolution, section = document.getElementById("ledger");
+  if (!R || !R.comparisons){ if (section) section.remove(); return; }
+
+  document.getElementById("ledgerfacts").innerHTML = [
+    [String(R.n_resolved), "comparisons resolved"],
+    [String(R.n_unresolved), "still open"],
+    [String(R.n_comparisons), "asked in total"],
+  ].map(([n, l]) =>
+    `<div class="keyfact"><div class="num">${n}</div><div class="lab">${l}</div></div>`
+  ).join("");
+
+  const tag = c => c.verdict === "resolved"
+    ? '<span class="tag is-small is-success">resolved</span>'
+    : c.verdict === "measured"
+      ? '<span class="tag is-small is-info">measured</span>'
+      : '<span class="tag is-small is-light">open</span>';
+
+  const order = {resolved: 0, measured: 1, "not resolved": 2};
+  const rows = [...R.comparisons]
+    .sort((a, b) => order[a.verdict] - order[b.verdict])
+    .map(c => `<tr${c.verdict === "not resolved" ? ' class="pending"' : ""}>
+      <td>${c.question}<br>
+          <span class="is-size-7 has-text-grey">${c.experiment}, n = ${c.n},
+          ${c.design}</span></td>
+      <td>${c.effect}</td>
+      <td>${tag(c)}</td>
+      <td class="is-size-7">${c.evidence}${
+        c.detectable ? `<br><span class="has-text-grey">could detect ${
+          c.detectable}</span>` : ""}</td></tr>`).join("");
+
+  document.getElementById("ledgertable").innerHTML =
+    `<thead><tr><th>Question</th><th>Observed</th><th>Verdict</th>
+     <th>Evidence</th></tr></thead><tbody>${rows}</tbody>`;
+}
+
+function nextTable(){
+  const rows=[
+    ["DUSt3R","naver/DUSt3R_ViTLarge_BaseDecoder_512_dpt","Pairwise point maps fused by global alignment; 132 forward passes per specimen."],
+    ["MASt3R","naver/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric","The metric variant returns real scale, which is what a volume needs."],
+    ["Fast3R","jedyang97/Fast3R_ViT_Large_512","All twelve views in one forward pass; twenty times cheaper, so run it first."]];
+  document.getElementById("next").innerHTML =
+    `<thead><tr><th>Method</th><th>Weights</th><th>Why it is worth running</th></tr></thead>`
+    + `<tbody>${rows.map(([a,b,d])=>
+      `<tr><td><strong>${a}</strong></td><td class="is-size-7">${b}</td>
+       <td class="is-size-7">${d}</td></tr>`).join("")}</tbody>`;
+}
+
+function honesty(){
+  const s=D.summary;
+  document.getElementById("confound").innerHTML =
+    `Across the Eucalyptus specimens, knowing only which capture batch a plant came from
+     explains <strong>R² = ${s.batch_confound_r2}</strong> of the mass variance,
+     more than any method in the table above achieves. The batches average
+     ${Object.entries(s.batch_means_kg).map(([k,v])=>`<strong>${v} kg</strong> (${k})`).join(", ")}.
+     It was R² = 0.887 on the two original batches alone.`;
+  const pl = s.plausibility;
+  document.getElementById("plausibility").innerHTML =
+    `Dividing each weighed mass by its reconstructed above-ground volume gives an implied
+     bulk density. Fresh plant tissue is 300&ndash;900 kg/m³. Only
+     <strong>${pl.n_plausible} of ${pl.n}</strong> specimens land inside a generous
+     ${pl.band_kg_m3[0]}&ndash;${pl.band_kg_m3[1]} band; the median is
+     <strong>${pl.median_density_kg_m3} kg/m³</strong>.
+     ${pl.verdicts.envelope || 0} imply less, the hull enclosing air, and
+     ${pl.verdicts.missing || 0} imply more, meaning they were barely reconstructed.`;
+  document.getElementById("notes").innerHTML =
+    "<ul>" + Object.values(D.notes).map(t=>`<li>${t}</li>`).join("") + "</ul>";
+}
+
+function scatter(){
+  const cv=document.getElementById("scatter"), ctx=cv.getContext("2d");
+  const best=D.methods[0].name;
+  const pts=S.map(s=>({x:s.target_kg, y:s.predictions[best], id:s.id, sp:s.species}));
+  const lim=Math.max(...pts.flatMap(p=>[p.x,p.y]))*1.12, pad=54;
+  const sx=v=>pad+(v/lim)*(cv.width-2*pad), sy=v=>cv.height-pad-(v/lim)*(cv.height-2*pad);
+
+  ctx.clearRect(0,0,cv.width,cv.height);
+  ctx.fillStyle="#ffffff"; ctx.fillRect(0,0,cv.width,cv.height);
+  ctx.strokeStyle="#b5b5b5"; ctx.setLineDash([5,5]); ctx.beginPath();
+  ctx.moveTo(sx(0),sy(0)); ctx.lineTo(sx(lim),sy(lim)); ctx.stroke(); ctx.setLineDash([]);
+  ctx.strokeStyle="#4a4a4a"; ctx.beginPath();
+  ctx.moveTo(pad,cv.height-pad); ctx.lineTo(cv.width-pad,cv.height-pad);
+  ctx.moveTo(pad,pad); ctx.lineTo(pad,cv.height-pad); ctx.stroke();
+
+  ctx.fillStyle="#7a7a7a"; ctx.font="12px 'Noto Sans',sans-serif";
+  for(let i=0;i<=4;i++){
+    const v=lim*i/4;
+    ctx.textAlign="center"; ctx.fillText(v.toFixed(1), sx(v), cv.height-pad+18);
+    ctx.textAlign="right";  ctx.fillText(v.toFixed(1), pad-8, sy(v)+4);
+  }
+  ctx.textAlign="center"; ctx.font="13px 'Noto Sans',sans-serif"; ctx.fillStyle="#4a4a4a";
+  ctx.fillText("weighed mass (kg)", cv.width/2, cv.height-14);
+  ctx.save(); ctx.translate(16,cv.height/2); ctx.rotate(-Math.PI/2);
+  ctx.fillText("predicted mass (kg)",0,0); ctx.restore();
+
+  const palette={};
+  const n = Math.max(1, D.summary.species.length - 1);
+  D.summary.species.forEach((sp,i)=>{ palette[sp] = rgb(viridis(0.15 + 0.7*i/n)); });
+  for(const p of pts){
+    ctx.fillStyle=palette[p.sp]||"#4a4a4a"; ctx.globalAlpha=.8;
+    ctx.beginPath(); ctx.arc(sx(p.x),sy(p.y),6,0,7); ctx.fill(); ctx.globalAlpha=1;
+  }
+  ctx.font="12px 'Noto Sans',sans-serif"; ctx.textAlign="left";
+  D.summary.species.forEach((sp,i)=>{
+    ctx.fillStyle=palette[sp]; ctx.beginPath(); ctx.arc(pad+12,pad+14+i*20,5,0,7); ctx.fill();
+    ctx.fillStyle="#4a4a4a"; ctx.fillText(sp,pad+24,pad+18+i*20);
+  });
+
+  const idle = `<p class="is-size-7 has-text-grey">Showing <strong>${best}</strong>, the lowest-RMSE method.</p>`;
+  document.getElementById("scatterinfo").innerHTML = idle;
+  cv.onmousemove = e=>{
+    const r=cv.getBoundingClientRect();
+    const mx=(e.clientX-r.left)*cv.width/r.width, my=(e.clientY-r.top)*cv.height/r.height;
+    const hit=pts.find(p=>Math.hypot(sx(p.x)-mx, sy(p.y)-my)<10);
+    document.getElementById("scatterinfo").innerHTML = hit
+      ? `<p class="is-size-7"><strong>${hit.id}</strong> &middot; ${hit.sp}<br>
+         weighed ${f(hit.x)} kg &middot; predicted ${f(hit.y)} kg</p>`
+      : idle;
+  };
+}
+
+/* The toggle selects where the occupancy field came from, not merely which
+   segmenter ran, so the buttons are grouped by what actually differs: the mask,
+   the number of views, or the pose estimate. */
+const GROUPS = [
+  ["segmentation", "Segmentation"],
+  ["reconstruction", "Reconstruction"],
+  ["sampling", "Fewer views"],
+  ["pose-free", "Pose-free"],
+];
+
+function methodButtons(){
+  const info = D.summary.method_info || {};
+  const keys = D.summary.methods_available || D.summary.segmenters;
+  const host = document.getElementById("segmenter");
+  host.innerHTML = GROUPS.map(([group, title]) => {
+    const inGroup = keys.filter(k => (info[k] || {}).group === group);
+    if (!inGroup.length) return "";
+    return `<div class="methodgroup"><span class="grouplabel">${title}</span>` +
+      inGroup.map(k =>
+        `<button class="button is-small" data-seg="${k}"
+                 aria-pressed="${k === segmenter}">${(info[k] || {}).label || k}</button>`
+      ).join("") + `</div>`;
+  }).join("");
+  syncPressed(host);
+  syncPressed(document.getElementById("colour"));
+  methodNote();
+}
+
+function methodNote(){
+  const info = (D.summary.method_info || {})[segmenter];
+  const el = document.getElementById("methodnote");
+  if (el) el.textContent = info ? info.note : "";
+}
+
+/* Bulma has no aria-pressed styling of its own, so the selected button is given
+   is-dark to match the template's link buttons. */
+function syncPressed(root){
+  root.querySelectorAll("button").forEach(b =>
+    b.classList.toggle("is-dark", b.getAttribute("aria-pressed") === "true"));
+}
+
+function legend(){
+  /* The swatch has to be the palette in use. A viridis bar under a plasma cloud
+     is worse than no legend: it is a legend that is wrong. */
+  const stops = (viewerCmap === "plasma" ? PLASMA
+                : viewerCmap === "greys" ? GREYS : VIRIDIS).map(rgb).join(",");
+  const bar = `linear-gradient(to right, ${stops})`;
+  const el = document.getElementById("legend");
+  if (colourMode === "segment")
+    el.innerHTML = `<i style="background:var(--canopy)"></i>above the pot rim
+       &nbsp;<i style="background:var(--pot)"></i>pot and below`;
+  else if (colourMode === "solid")
+    el.innerHTML = `<i style="background:var(--canopy)"></i>one colour, shaded by depth`;
+  else
+    el.innerHTML = (colourMode === "z" ? "floor" : "far")
+      + ` <i class="ramp" style="background:${bar}"></i> `
+      + (colourMode === "z" ? "top" : "near");
+}
+
+async function buildList(){
+  const host=document.getElementById("list"); host.innerHTML="";
+  for(const s of [...S].sort((a,b)=>a.id.localeCompare(b.id))){
+    const b=document.createElement("button"); b.type="button";
+    b.dataset.id = s.id;
+    b.setAttribute("aria-current", String(s.id===current));
+    const verdict = ((s.quality || {})[segmenter] || {}).density_verdict
+                    || s.density_verdict || "unknown";
+    b.innerHTML=`<span><span class="verdict ${verdict}" title="${verdict}"></span>${s.id}</span>
+      <span class="mass">${f(s.target_kg)} kg</span>`;
+    b.onclick=()=>select(s.id);
+    host.appendChild(b);
+  }
+}
+
+async function render(){
+  const c = await cloud(current, segmenter);
+  draw(document.getElementById("stage"), c,
+       {dot: viewerDot, cmap: viewerCmap, rim: potHeight(c)});
+  drawSlices(c);
+  document.getElementById("cloudinfo").textContent =
+    c ? `${c.n.toLocaleString()} voxels shown` : "";
+  legend();
+}
+
+function facts(){
+  const s=byId.get(current), q=s.quality[segmenter]||{}, m=s.mesh||{};
+  const density = q.density_kg_m3 == null ? "n/a" : `${Math.round(q.density_kg_m3)}`;
+  const rim = q.pot_height_m == null ? "n/a"
+    : `${f(q.pot_height_m)}${q.pot_confident === false ? "*" : ""}`;
+  // Everything here comes from the selected method's own quality block. Rim,
+  // volume and density all change with the reconstruction, and reading them off
+  // the specimen would show the carve's numbers beside the fusion's cloud.
+  const rows=[["Weighed",f(s.target_kg)+" kg"],["Hull",f(q.volume_l,1)+" L"],
+    ["Above rim",f(q.above_rim_l,1)+" L"],["Height",f(q.height_m)+" m"],
+    ["Pot rim",rim+" m"],["Implied density",density+" kg/m³"],
+    ["Canopy area",f(m.canopy_area_m2,2)+" m²"],["Solidity",f(m.solidity,2)]];
+  document.getElementById("sfacts").innerHTML = rows.map(([k,v])=>
+    `<div class="fact"><b>${v}</b><span>${k}</span></div>`).join("");
+}
+
+async function select(id){
+  current=id; const s=byId.get(id);
+  document.getElementById("sid").textContent=id;
+  document.getElementById("sspecies").textContent=s.species;
+  const best=D.methods[0].name;
+  document.getElementById("ssub").textContent =
+    `${best}: ${f(s.predictions[best])} kg predicted`;
+  document.querySelectorAll("#list button").forEach(b=>
+    b.setAttribute("aria-current", String(b.dataset.id===id)));
+  facts(); filmstrip(id); await render();
+}
+
+/* ------------------------------------------------------------ filmstrip
+
+   The evidence between a capture and its number. Tiles are files under
+   static/filmstrip rather than base64 in the payload, because fourteen
+   megabytes of frames would make the page unopenable; this way the browser
+   fetches only the specimen someone selected, about four hundred kilobytes, and
+   loading="lazy" defers even that until the row scrolls into view. */
+const FILM_ROWS = [
+  ["rgb", "Capture", "the frame as the camera returned it, uncropped", true],
+  ["mask", "Segmentation", "subject mask outlined over a dimmed frame", false],
+  ["depth", "Depth", "what the sensor measured, near is bright", false],
+];
+
+/* Which segmenter's opinion the strip is showing, and which turntable. Held
+   outside the render so switching specimens does not silently reset them. */
+const FILM = {seg: null, view: "measured", turn: 0};
+
+function filmEntry(id){
+  const R = D.filmstrip;
+  return R && R.specimens ? R.specimens.find(s => s.plant_id === id) : null;
+}
+
+function filmSegmenters(){
+  const entry = filmEntry(current);
+  return entry ? Object.keys(entry.segmenters) : [];
+}
+
+/* The turntable. Eight pre-rendered azimuths flipped by dragging, rather than a
+   shaded renderer in the page: shading in the browser needs vertices and normals
+   in the payload, megabytes per specimen, for a view most readers will glance at
+   once. Frames are about twenty kilobytes and load as they are reached. */
+function filmTurn(host, frames){
+  const img = host.querySelector("#turnimg");
+  if (!img || !frames.length) return;
+  const show = () => {
+    const k = ((FILM.turn % frames.length) + frames.length) % frames.length;
+    img.src = "./static/filmstrip/" + frames[k];
+  };
+  show();
+
+  let drag = false, lx = 0, acc = 0;
+  img.style.cursor = "grab";
+  img.addEventListener("pointerdown", e => {
+    drag = true; lx = e.clientX; acc = 0;
+    // Guarded like the release below. A pointerdown can arrive without a live
+    // pointer behind it, and an uncaught NotFoundError here would abort the
+    // handler and leave the turntable unresponsive rather than merely uncaptured.
+    try { img.setPointerCapture(e.pointerId) } catch(_){}
+    img.style.cursor = "grabbing";
+    e.preventDefault(); });
+  img.addEventListener("pointermove", e => {
+    if (!drag) return;
+    acc += e.clientX - lx; lx = e.clientX;
+    // One frame per 28 px of drag, which reads as rotation rather than as a
+    // slideshow at the eight azimuths that were rendered.
+    while (Math.abs(acc) >= 28){
+      FILM.turn += acc > 0 ? 1 : -1;
+      acc -= acc > 0 ? 28 : -28;
+      show();
+    } });
+  const stop = e => { drag = false; img.style.cursor = "grab";
+    try { img.releasePointerCapture(e.pointerId) } catch(_){} };
+  img.addEventListener("pointerup", stop);
+  img.addEventListener("pointercancel", stop);
+
+  const step = host.querySelector("#turnstep");
+  if (step) step.onclick = e => {
+    const b = e.target.closest("button"); if (!b) return;
+    FILM.turn += Number(b.dataset.step); show(); };
+}
+
+function filmstrip(id){
+  const host = document.getElementById("filmstrip");
+  if (!host) return;
+  const entry = filmEntry(id);
+  const pick = document.getElementById("stripseg");
+
+  if (!entry){
+    host.innerHTML = `<p class="is-size-7 has-text-grey">No frames rendered for
+      this specimen. Run <code>cli filmstrip</code>.</p>`;
+    if (pick) pick.innerHTML = "";
+    return;
+  }
+
+  const names = Object.keys(entry.segmenters);
+  if (!names.includes(FILM.seg)) FILM.seg = names[0];
+  const seg = entry.segmenters[FILM.seg];
+
+  if (pick){
+    pick.innerHTML = names.map(n =>
+      `<option value="${n}"${n === FILM.seg ? " selected" : ""}>${
+        entry.segmenters[n].label}</option>`).join("");
+  }
+  const segnote = document.getElementById("stripsegnote");
+  if (segnote) segnote.innerHTML =
+    `<strong>${seg.label}.</strong> ${seg.detail}. Keeping
+     ${seg.mask_px_per_view.toLocaleString()} pixels per view on this specimen.`
+    + (names.length > 1 ? "" :
+       ` Only one segmenter has run on this capture.`);
+
+  const tile = (src, alt) =>
+    `<img src="./static/filmstrip/${src}" alt="${alt}" loading="lazy"
+          style="width:100%;border-radius:3px;display:block">`;
+
+  const rows = FILM_ROWS.map(([key, title, detail, shared]) => {
+    const source = shared ? entry.frames : seg.frames;
+    return `
+    <div class="mb-4">
+      <p class="mb-1"><strong>${title}</strong>
+        <span class="is-size-7 has-text-grey">&nbsp;${detail}${
+          shared ? "" : `, ${seg.label.toLowerCase()}`}</span></p>
+      <div class="columns is-mobile is-variable is-1">
+        ${source.map((fr, k) => `
+          <div class="column">
+            ${tile(fr[key], `${id} ${title}`)}
+            <p class="is-size-7 has-text-grey has-text-centered">${
+              entry.frames[k].azimuth_deg}&deg;</p>
+          </div>`).join("")}
+      </div>
+    </div>`; }).join("");
+
+  const volumes = seg.volumes.length ? `
+    <div class="mb-4">
+      <p class="mb-1"><strong>What each operator built</strong>
+        <span class="is-size-7 has-text-grey">&nbsp;depth-cued projection, near
+        is bright. This is the evidence.</span></p>
+      <div class="columns is-mobile is-variable is-1">
+        ${seg.volumes.map(vol => `
+          <div class="column is-one-quarter">
+            ${tile(vol.image, `${id} ${vol.title}`)}
+            <p class="is-size-7 has-text-grey has-text-centered">${vol.title}</p>
+          </div>`).join("")}
+      </div>
+    </div>` : "";
+
+  /* Two turntables of the same specimen, and the choice between them is the
+     point. The measured points are the segmenter's own output at sensor
+     resolution, where a stem is dozens of points and a leaf is a leaf. The mesh
+     is built on a 12 mm grid, and a eucalyptus leaf is one or two voxels across,
+     so it cannot resolve one. If the leaves look like blobs in the lit view and
+     like leaves in the point view, that is not a rendering fault; it is the
+     resolution of the reconstruction, shown. */
+  const table = FILM.view === "shaded" ? seg.shaded : seg.measured;
+  const turntable = table ? `
+    <div class="columns">
+      <div class="column is-half">
+        <img id="turnimg" alt="${id} turntable" loading="lazy"
+             style="width:100%;border-radius:3px;display:block;touch-action:none">
+        <div class="buttons are-small mt-2" id="turnstep">
+          <button class="button is-small" data-step="-1">&larr; Turn</button>
+          <button class="button is-small" data-step="1">Turn &rarr;</button>
+          <span class="is-size-7 has-text-grey ml-2" style="align-self:center">
+            or drag the image</span>
+        </div>
+      </div>
+      <div class="column is-half">
+        ${FILM.view === "shaded" ? `
+          <p><strong>The extracted surface, lit</strong></p>
+          <p class="is-size-7 has-text-grey">
+            Marching cubes over the carve, Lambert shaded:
+            ${table.n_vertices.toLocaleString()} vertices,
+            ${table.n_faces.toLocaleString()} faces,
+            ${table.area_m2.toFixed(3)} m&sup2; of surface.
+          </p>
+          <p class="is-size-7 has-text-grey">
+            Read this one as an illustration. Every other panel here is depth
+            cued rather than lit, deliberately: shading makes a surface read as
+            solid everywhere, which is exactly what a carved hull is not. It
+            hides the hollows and the space no camera reached.
+          </p>
+          <p class="is-size-7 has-text-grey">
+            If the leaves and the stem look like blobs, that is the
+            reconstruction rather than the render. The carve runs on a 12 mm
+            grid and a eucalyptus leaf is one or two voxels across, so no
+            surface extracted from it can resolve one. Switch the turntable to
+            the measured points to see what was actually recorded.
+          </p>` : `
+          <p><strong>The measured points</strong></p>
+          <p class="is-size-7 has-text-grey">
+            ${table.n_points.toLocaleString()} points, reaching
+            ${table.top_m.toFixed(3)} m, coloured by height above the floor so a
+            leaf keeps its colour as the turntable turns.
+          </p>
+          <p class="is-size-7 has-text-grey">
+            This is the segmenter's own output at sensor resolution, before any
+            voxel grid. It is where the stem and the leaves are legible, and
+            where the discarded plant in the section below is visible as a plant
+            rather than as a row in a table.
+          </p>`}
+      </div>
+    </div>` : "";
+
+  host.innerHTML = rows + volumes + turntable;
+  if (table) filmTurn(host, table.frames);
+}
+
+function attach(){
+  const cv=document.getElementById("stage");
+  let drag=false, lx=0, ly=0;
+  cv.addEventListener("pointerdown",e=>{drag=true;lx=e.clientX;ly=e.clientY;cv.setPointerCapture(e.pointerId)});
+  cv.addEventListener("pointermove",e=>{ if(!drag)return;
+    yaw+=(e.clientX-lx)*0.01; pitch=Math.max(-1.4,Math.min(1.4,pitch+(e.clientY-ly)*0.01));
+    lx=e.clientX; ly=e.clientY; cloud(current,segmenter).then(c=>draw(cv,c)); });
+  const stop=e=>{drag=false; try{cv.releasePointerCapture(e.pointerId)}catch(_){}};
+  cv.addEventListener("pointerup",stop); cv.addEventListener("pointercancel",stop);
+  cv.addEventListener("wheel",e=>{e.preventDefault();
+    zoom=Math.max(.3,Math.min(2.4,zoom*(e.deltaY>0?.92:1.08)));
+    cloud(current,segmenter).then(c=>draw(cv,c)); },{passive:false});
+
+  document.getElementById("segmenter").onclick=async e=>{
+    const b=e.target.closest("button"); if(!b)return;
+    segmenter=b.dataset.seg;
+    e.currentTarget.querySelectorAll("button").forEach(
+      x=>x.setAttribute("aria-pressed",String(x===b)));
+    syncPressed(e.currentTarget); methodNote();
+    await buildList(); facts(); await render(); };
+  document.getElementById("colour").onclick=async e=>{
+    const b=e.target.closest("button"); if(!b)return;
+    colourMode=b.dataset.mode;
+    e.currentTarget.querySelectorAll("button").forEach(
+      x=>x.setAttribute("aria-pressed",String(x===b)));
+    syncPressed(e.currentTarget);
+    await render(); };
+  const cmapSel = document.getElementById("viewercmap");
+  if (cmapSel) cmapSel.onchange = async e => {
+    viewerCmap = e.target.value; legend(); await render(); };
+  const dotSel = document.getElementById("viewerdot");
+  if (dotSel) dotSel.onchange = async e => {
+    viewerDot = Number(e.target.value); await render(); };
+
+  const segSel = document.getElementById("stripseg");
+  if (segSel) segSel.onchange = e => { FILM.seg = e.target.value; filmstrip(current); };
+  const viewSel = document.getElementById("stripview");
+  if (viewSel) viewSel.onchange = e => { FILM.view = e.target.value; filmstrip(current); };
+
+  addEventListener("resize",()=>cloud(current,segmenter).then(c=>draw(document.getElementById("stage"),c,{dot:viewerDot,cmap:viewerCmap,rim:potHeight(c)})));
+}
+
+pipeline(); methodTable(); nextTable(); honesty(); scatter(); methodButtons();
+buildList().then(attach).then(()=>select(current));
+
+/* The experiment log. Read straight from the payload, which read it from the
+   work directory, so the page cannot claim an experiment ran when its artefact
+   is absent. */
+function progressTable(){
+  const rows = D.summary.progress || [];
+  const host = document.getElementById("progress");
+  if (!host || !rows.length) return;
+
+  const stageLabel = {
+    data: "Data", reconstruction: "Reconstruction", classical: "Classical",
+    learned: "Learned", check: "Check",
+  };
+
+  host.innerHTML =
+    `<thead><tr><th>Experiment</th><th>Stage</th><th>Status</th><th>Ran</th>
+     <th>Result</th></tr></thead><tbody>` +
+    rows.map(r => {
+      const tag = r.stale
+        ? '<span class="tag is-small is-danger">stale</span>'
+        : r.done
+          ? '<span class="tag is-small is-success">done</span>'
+          : `<span class="tag is-small is-light">pending${r.needs_gpu ? ", GPU" : ""}</span>`;
+      return `<tr${r.done && !r.stale ? "" : ' class="pending"'}>
+        <td><strong>${r.label}</strong><br>
+            <span class="is-size-7 has-text-grey">${r.why}</span><br>
+            <code class="is-size-7">${r.command}</code></td>
+        <td>${stageLabel[r.stage] || r.stage}</td>
+        <td>${tag}</td>
+        <td>${r.ran_at || "n/a"}</td>
+        <td>${r.headline || ""}</td></tr>`;
+    }).join("") + "</tbody>";
+
+  const s = D.summary.progress_summary || {};
+  document.getElementById("progressfacts").innerHTML = [
+    [`${s.done}/${s.total}`, "experiments run"],
+    [String(s.pending_gpu || 0), "waiting on a GPU"],
+    [String(s.stale || 0), "stale results"],
+  ].map(([n, l]) =>
+    `<div class="keyfact"><div class="num">${n}</div><div class="lab">${l}</div></div>`
+  ).join("");
+}
+
+progressTable();
+
+/* ------------------------------------------------------------------ Pheno4D
+
+   Fourteen laser-scanned plants, each reconstructed three ways, sharing one
+   camera across the three panels. Sharing it is the whole point: at a single
+   angle the hull is visibly filling the gaps between the leaves, which neither
+   a still figure nor a pair of IoU numbers conveys as directly.
+
+   Colour is forced to depth here. The specimen viewer's default splits pot from
+   canopy at a measured rim, and a laser-scanned maize plant standing on soil has
+   no pot for that to mean anything about. */
+const RECON = { yaw: 0.62, pitch: 0.18, zoom: 1.15, plant: null, clouds: new Map() };
+
+async function reconArm(entry, arm){
+  const key = entry.plant + "/" + arm.key;
+  if (!RECON.clouds.has(key))
+    RECON.clouds.set(key, await decodeCloud(arm.cloud, key));
+  return RECON.clouds.get(key);
+}
+
+function reconDraw(){
+  const entry = RECON.plant;
+  if (!entry) return;
+  for (const arm of entry.arms){
+    const cv = document.getElementById("recon-" + arm.key);
+    const c = RECON.clouds.get(entry.plant + "/" + arm.key);
+    if (cv && c) draw(cv, c, {dot: 4, mode: "height",
+      yawL: RECON.yaw, pitchL: RECON.pitch, zoomL: RECON.zoom});
+  }
+}
+
+function reconZoom(factor){
+  RECON.zoom = Math.max(0.4, Math.min(4.0, RECON.zoom * factor));
+  reconDraw();
+}
+
+async function reconSelect(entry){
+  RECON.plant = entry;
+  await Promise.all(entry.arms.map(a => reconArm(entry, a)));
+
+  for (const arm of entry.arms){
+    const stat = document.getElementById("reconstat-" + arm.key);
+    if (stat) stat.innerHTML =
+      `${arm.volume_l.toFixed(2)} L` +
+      (arm.ratio ? ` &middot; <strong>${arm.ratio}&times;</strong> true` : "") +
+      (arm.iou != null ? `<br>IoU against the truth ${arm.iou.toFixed(3)}` : "");
+  }
+
+  const carve = entry.arms.find(a => a.key === "carve");
+  const fusion = entry.arms.find(a => a.key === "fusion");
+  const note = document.getElementById("reconstruction-note");
+  if (note) note.innerHTML =
+    `${entry.plant}, ${entry.species}, ${entry.n_organs} labelled organs,
+     ${(entry.height_m * 100).toFixed(0)} cm tall, from ${D.reconstruction.source}.
+     True volume ${entry.true_volume_l.toFixed(2)} L. Twelve virtual views, the
+     same carve and the same fusion the pipeline uses. The views are clean, with
+     exact poses, no sensor noise and no segmentation error, so this bounds the
+     operator from above rather than estimating what the real captures do.`;
+
+  const inv = document.getElementById("reconstruction-inversion");
+  if (inv && carve && fusion){
+    const truthWins = fusion.iou > carve.iou ? "fusion" : "carving";
+    const metricWins = fusion.silhouette_iou > carve.silhouette_iou
+      ? "fusion" : "carving";
+    inv.innerHTML =
+      `Against the truth, ${truthWins} wins: IoU
+       <strong>${fusion.iou.toFixed(3)}</strong> for fusion against
+       ${carve.iou.toFixed(3)} for carving. Scored the usual way, by reprojecting
+       each reconstruction into the silhouettes it came from, ${metricWins} wins:
+       <strong>${carve.silhouette_iou.toFixed(3)}</strong> for carving against
+       ${fusion.silhouette_iou.toFixed(3)} for fusion. Across fourteen plants the
+       two measures disagree on <strong>every one</strong>.`;
+  }
+
+  document.querySelectorAll("#reconstruction-plants button").forEach(b =>
+    b.setAttribute("aria-pressed", String(b.dataset.plant === entry.plant)));
+  syncPressed(document.getElementById("reconstruction-plants"));
+  reconDraw();
+}
+
+async function reconstructionPanel(){
+  const R = D.reconstruction;
+  const section = document.getElementById("reconstruction");
+  if (!R || !R.plants || !R.plants.length){ if (section) section.remove(); return; }
+
+  const picker = document.getElementById("reconstruction-plants");
+  picker.innerHTML = R.plants.map(p =>
+    `<button class="button is-small" data-plant="${p.plant}"
+             aria-pressed="false">${p.plant}</button>`).join("");
+  picker.onclick = async e => {
+    const b = e.target.closest("button");
+    if (!b) return;
+    await reconSelect(R.plants.find(p => p.plant === b.dataset.plant));
+  };
+
+  const host = document.getElementById("reconstruction-panels");
+  host.innerHTML = R.plants[0].arms.map(a => `
+    <div class="column">
+      <canvas class="recon" id="recon-${a.key}"
+              style="width:100%;aspect-ratio:1;touch-action:none;cursor:grab"></canvas>
+      <p class="mt-2"><strong>${a.title}</strong><br>
+        <span class="is-size-7 has-text-grey">${a.detail}</span></p>
+      <p class="is-size-7" id="reconstat-${a.key}"></p>
+    </div>`).join("");
+
+  /* One camera for all three canvases. Dragging or scrolling on any of them
+     moves every panel, because a comparison at two different angles is not a
+     comparison. */
+  for (const arm of R.plants[0].arms){
+    const cv = document.getElementById("recon-" + arm.key);
+    if (!cv) continue;
+    let drag = false, lx = 0, ly = 0;
+    cv.addEventListener("pointerdown", e => {
+      drag = true; lx = e.clientX; ly = e.clientY;
+      cv.setPointerCapture(e.pointerId); cv.style.cursor = "grabbing"; });
+    cv.addEventListener("pointermove", e => {
+      if (!drag) return;
+      RECON.yaw += (e.clientX - lx) * 0.01;
+      RECON.pitch = Math.max(-1.4, Math.min(1.4,
+        RECON.pitch + (e.clientY - ly) * 0.01));
+      lx = e.clientX; ly = e.clientY; reconDraw(); });
+    const stop = e => { drag = false; cv.style.cursor = "grab";
+      try { cv.releasePointerCapture(e.pointerId) } catch(_){} };
+    cv.addEventListener("pointerup", stop);
+    cv.addEventListener("pointercancel", stop);
+    cv.addEventListener("wheel", e => {
+      if (!(e.ctrlKey || e.metaKey || e.shiftKey)) return;   // let the page scroll
+      e.preventDefault(); reconZoom(e.deltaY > 0 ? 0.92 : 1.08); },
+      {passive: false});
+  }
+
+  const zoomHost = document.getElementById("reconstruction-zoom");
+  if (zoomHost) zoomHost.onclick = e => {
+    const b = e.target.closest("button");
+    if (!b) return;
+    if (b.dataset.zoom === "reset"){
+      RECON.zoom = 1.15; RECON.yaw = 0.62; RECON.pitch = 0.18; reconDraw();
+    } else reconZoom(Number(b.dataset.zoom));
+  };
+
+  addEventListener("resize", reconDraw);
+  await reconSelect(R.plants[0]);
+}
+
+reconstructionPanel();
+
+/* ------------------------------------------------- batch holdout and transfer
+
+   Two results that were measured after the page was first written and had
+   nowhere to appear. Both are tables rather than renders, so they read straight
+   out of their own report files. Each section removes itself when its report is
+   absent, so a clone that has not run the experiment still builds. */
+function holdoutSection(){
+  const R = D.batch_holdout, section = document.getElementById("holdout");
+  if (!R || !R.rows){ if (section) section.remove(); return; }
+
+  const SHORT = {
+    "geometric, every usable specimen": "geometric features, all 36",
+    "geometric (no DINO)": "geometric features, shared 33",
+    "dinov2-base": "DINOv2 frozen, 33",
+    "dinov2-base + geometry": "DINOv2 with geometry, 33",
+    "batch membership only": "batch label alone",
+  };
+  const by = new Map();
+  for (const r of R.rows){
+    if (!by.has(r.condition)) by.set(r.condition, {});
+    by.get(r.condition)[r.scheme] = r;
+  }
+
+  const rows = [...by.entries()].map(([name, pair]) => {
+    const a = pair.loocv, b = pair.lobo;
+    const gap = a && b ? (b.rmse_kg - a.rmse_kg) : null;
+    const isBatch = name === "batch membership only";
+    return `<tr${isBatch ? ' class="pending"' : ""}>
+      <td>${isBatch ? "<strong>" : ""}${SHORT[name] || name}${isBatch ? "</strong>" : ""}</td>
+      <td>${a ? a.rmse_kg.toFixed(3) : "n/a"}</td>
+      <td>${a ? (a.r2 >= 0 ? "+" : "") + a.r2.toFixed(3) : "n/a"}</td>
+      <td>${b ? b.rmse_kg.toFixed(3) : "n/a"}</td>
+      <td>${b ? (b.r2 >= 0 ? "+" : "") + b.r2.toFixed(3) : "n/a"}</td>
+      <td>${gap == null ? "n/a" : "<strong>+" + gap.toFixed(3) + "</strong>"}</td></tr>`;
+  }).join("");
+
+  document.getElementById("holdouttable").innerHTML =
+    `<thead><tr><th>Condition</th>
+     <th>LOOCV<br><span class="is-size-7 has-text-grey">one specimen out</span><br>RMSE kg</th>
+     <th>R&sup2;</th>
+     <th>LOBO<br><span class="is-size-7 has-text-grey">one capture batch out</span><br>RMSE kg</th>
+     <th>R&sup2;</th><th>Inflation kg</th></tr></thead>
+     <tbody>${rows}</tbody>`;
+
+  const batch = by.get("batch membership only");
+  const best = [...by.entries()]
+    .filter(([n]) => n !== "batch membership only" && by.get(n).loocv)
+    .sort((x, y) => x[1].loocv.rmse_kg - y[1].loocv.rmse_kg)[0];
+  const v = document.getElementById("holdoutverdict");
+  if (v && batch && batch.loocv && best) v.innerHTML =
+    `Knowing only which capture batch a plant came from predicts its mass to
+     <strong>${batch.loocv.rmse_kg.toFixed(3)} kg</strong>, R&sup2;
+     ${batch.loocv.r2.toFixed(3)}. The best real method here manages
+     ${best[1].loocv.rmse_kg.toFixed(3)} kg. ${R.n_specimens} specimens in
+     ${Object.keys(R.batches || {}).length} batches.`;
+}
+
+function externalSection(){
+  const R = D.external, section = document.getElementById("external");
+  if (!R || !R.gaps){ if (section) section.remove(); return; }
+
+  const facts = [
+    [String(R.n_after_screen), "plants after the screen"],
+    [`${R.mass_range_g[0]} to ${R.mass_range_g[1]} g`, "continuous mass range"],
+    [String(Object.keys(R.cultivars || {}).length), "cultivars, one held out at a time"],
+  ];
+  document.getElementById("externalfacts").innerHTML = facts.map(([n, l]) =>
+    `<div class="keyfact"><div class="num">${n}</div><div class="lab">${l}</div></div>`
+  ).join("");
+
+  const label = {diameter_cm: "Diameter", height_cm: "Height",
+                 area_cm2: "Projected area against their leaf area"};
+  document.getElementById("externalchecks").innerHTML =
+    `<thead><tr><th>Trait</th><th>Pearson r</th><th>Mean absolute difference</th>
+     <th>n</th></tr></thead><tbody>` +
+    Object.entries(R.measurement_checks).map(([k, c]) =>
+      `<tr><td>${label[k] || k}</td>
+       <td><strong>${c.r >= 0 ? "+" : ""}${c.r.toFixed(3)}</strong></td>
+       <td>${c.mae.toFixed(2)}</td><td>${c.n}</td></tr>`).join("") + "</tbody>";
+
+  const order = Object.keys(R.gaps);
+  const bestKey = order.reduce((a, b) =>
+    R.gaps[a].held_out_cultivar_rmse_kg <= R.gaps[b].held_out_cultivar_rmse_kg ? a : b);
+  document.getElementById("externaltable").innerHTML =
+    `<thead><tr><th>Feature set</th>
+     <th>LOOCV<br><span class="is-size-7 has-text-grey">one plant out</span><br>RMSE g</th>
+     <th>R&sup2;</th>
+     <th>LOBO<br><span class="is-size-7 has-text-grey">one cultivar out</span><br>RMSE g</th>
+     <th>R&sup2;</th>
+     <th>LOBO unscreened<br>R&sup2;</th></tr></thead><tbody>` +
+    order.map(k => {
+      const g = R.gaps[k], win = k === bestKey;
+      return `<tr>
+        <td>${win ? "<strong>" : ""}${k}${win ? "</strong>" : ""}</td>
+        <td>${(g.loocv_rmse_kg * 1000).toFixed(1)}</td>
+        <td>${g.loocv_r2 >= 0 ? "+" : ""}${g.loocv_r2.toFixed(3)}</td>
+        <td>${win ? "<strong>" : ""}${(g.held_out_cultivar_rmse_kg * 1000).toFixed(1)}${win ? "</strong>" : ""}</td>
+        <td>${g.held_out_cultivar_r2 >= 0 ? "+" : ""}${g.held_out_cultivar_r2.toFixed(3)}</td>
+        <td>${g.unscreened_cultivar_r2 >= 0 ? "+" : ""}${g.unscreened_cultivar_r2.toFixed(3)}</td>
+      </tr>`; }).join("") + "</tbody>";
+
+  const paired = R.paired_vs_2d_profile || {};
+  const surface = paired["2D + profile + surface"];
+  const v = document.getElementById("externalverdict");
+  if (v) v.innerHTML =
+    `Holding out a whole cultivar, <strong>${bestKey}</strong> reaches R&sup2;
+     <strong>${R.gaps[bestKey].held_out_cultivar_r2.toFixed(3)}</strong>, where the
+     same estimator and the same protocol give R&sup2; below zero on our own
+     capture batches.` +
+    (surface ? ` Adding the back-projected surface to the outline set improves
+     RMSE by <strong>${Math.abs(surface.difference * 1000).toFixed(1)} g</strong>,
+     paired bootstrap interval [${(surface.low * 1000).toFixed(1)},
+     ${(surface.high * 1000).toFixed(1)}], p = ${surface.p_direction.toFixed(4)}.
+     That is the first time a 3D against 2D comparison in this project has
+     resolved.` : "");
+}
+
+holdoutSection(); externalSection();
+resolutionSection();
+
+/* Plant the carve discarded. Ranked by how much height was lost, because that is
+   the quantity a reader should judge the reconstruction on, and the flagged rows
+   are the ones whose reported volume should not be read as a plant. */
+/* ------------------------------------------------- research table furniture
+
+   These tables are read by an examiner as well as by a browser, so they carry
+   what a dissertation table carries: a number, a caption above, units in the
+   column heads rather than repeated down every row, and a note beneath that
+   explains any coded column.
+
+   The coded column is the substantive change. A verdict spelled out in prose and
+   repeated down seventeen rows is not a column, it is a paragraph set in a grid,
+   and it pushes the numbers off the side of the page. A letter with a legend
+   says the same thing and lets the eye stay on the figures. */
+function tableFrame(id, title, notes){
+  const cap = document.getElementById(id + "cap");
+  const note = document.getElementById(id + "note");
+  // The caption is stored, not numbered. Sections render in whatever order
+  // their scripts run, which is not the order a reader meets them: numbering
+  // here put Table 4 above Table 3 on the page. renumberTables() assigns the
+  // numbers once, from the document.
+  if (cap) cap.dataset.caption = title;
+  if (note) note.innerHTML = notes;
+}
+
+function renumberTables(){
+  document.querySelectorAll(".tablecap[data-caption]").forEach((cap, i) => {
+    cap.innerHTML = `<span class="num">Table ${i + 1}.</span> ${cap.dataset.caption}`;
+  });
+}
+
+/* Distinct verdict strings, in the order they first appear, mapped to letters.
+   Derived rather than hard coded, so a new verdict in the report earns a letter
+   and a legend entry instead of silently reading as one of the old ones. */
+function verdictCodes(rows, field){
+  const seen = new Map();
+  for (const r of rows)
+    if (!seen.has(r[field])) seen.set(r[field], String.fromCharCode(97 + seen.size));
+  return seen;
+}
+
+function legendFrom(codes){
+  return [...codes].map(([text, letter]) => `<b>${letter}</b> ${text}`)
+    .join(". &nbsp;") + ".";
+}
+
+function pedestalSection(){
+  const R = D.pedestal, section = document.getElementById("pedestal");
+  if (!R || !R.rows){ if (section) section.remove(); return; }
+
+  document.getElementById("pedestalfacts").innerHTML = [
+    [`${R.n_flagged} / ${R.n_specimens}`, "specimens with plant above the carve"],
+    [String(R.n_recoverable), "a narrow column, so recoverable"],
+    [`${R.median_height_lost_m} m`, "median height discarded"],
+  ].map(([n, l]) =>
+    `<div class="keyfact"><div class="num">${n}</div><div class="lab">${l}</div></div>`
+  ).join("");
+
+  const flagged = new Set(R.flagged);
+  const ordered = [...R.rows].sort((a, b) => b.height_lost_m - a.height_lost_m);
+  const codes = verdictCodes(ordered, "verdict");
+
+  const rows = ordered.map(r => `<tr${flagged.has(r.plant_id) ? ' class="pending"' : ""}>
+      <td><strong>${r.plant_id}</strong>${r.rim_measured ? "" : "<sup>*</sup>"}</td>
+      <td>${r.mass_kg.toFixed(2)}</td>
+      <td>${r.reported_volume_l.toFixed(2)}</td>
+      <td>${r.carved_top_m.toFixed(3)}</td>
+      <td>${r.segmented_top_m.toFixed(3)}</td>
+      <td>${flagged.has(r.plant_id)
+        ? `<strong>${r.height_lost_m.toFixed(3)}</strong>` : r.height_lost_m.toFixed(3)}</td>
+      <td>${r.discarded_points.toLocaleString()}</td>
+      <td class="sym">${codes.get(r.verdict)}</td></tr>`).join("");
+
+  document.getElementById("pedestaltable").innerHTML =
+    `<thead>
+       <tr>
+         <th rowspan="2" class="nospan">Specimen</th>
+         <th rowspan="2" class="nospan">Mass<br>(kg)</th>
+         <th rowspan="2" class="nospan">Reported<br>volume (L)</th>
+         <th colspan="3" class="spanner">Vertical extent (m)</th>
+         <th rowspan="2" class="nospan">Points<br>discarded</th>
+         <th rowspan="2" class="nospan sym">Note</th>
+       </tr>
+       <tr><th>Carve top</th><th>Segmentation top</th><th>Difference</th></tr>
+     </thead><tbody>${rows}</tbody>`;
+
+  tableFrame("pedestaltable",
+    `Reconstructed against segmented vertical extent for all ${R.n_specimens}
+     specimens, ordered by the height the carve discarded.`,
+    `<b>*</b> the rim detector found no step on this capture, so the reported
+     volume is measured from the 0.280 m fallback, which on a specimen raised on
+     a stand lies inside the stand. Reported volume is the volume above that rim,
+     the figure quoted elsewhere on this page. Difference is segmentation top
+     less carve top, and a specimen is flagged above 0.15 m. ` + legendFrom(codes));
+
+  const worst = [...R.rows].sort((a, b) => b.discarded_points - a.discarded_points)[0];
+  const v = document.getElementById("pedestalverdict");
+  if (v && worst) v.innerHTML =
+    `On ${R.n_flagged} of ${R.n_specimens} specimens the segmentation reaches
+     higher than the carve by more than 15 cm, with a median of
+     <strong>${R.median_height_lost_m} m</strong> of plant discarded. On
+     ${worst.plant_id} the carve stops at ${worst.carved_top_m.toFixed(3)} m while
+     the segmentation reaches ${worst.segmented_top_m.toFixed(3)} m, throwing away
+     <strong>${worst.discarded_points.toLocaleString()}</strong> points the camera
+     had already recorded.`;
+}
+
+pedestalSection();
+
+/* The pot check. Grouped by whether the pot was weighed, because that is what
+   decides whether the row is evidence or a question. */
+function potMassSection(){
+  const R = D.pot_mass, section = document.getElementById("potmass");
+  if (!R || !R.rows){ if (section) section.remove(); return; }
+
+  const cal = R.calibration || {};
+  document.getElementById("potfacts").innerHTML = [
+    [`${R.n_measured} / ${R.n_specimens}`, "pots actually weighed"],
+    [`r = ${cal.pearson_r != null ? cal.pearson_r : "n/a"}`,
+     "mass against volume, weighed pots"],
+    [String(R.n_correctable), "estimates the reconstruction can correct"],
+  ].map(([n, l]) =>
+    `<div class="keyfact"><div class="num">${n}</div><div class="lab">${l}</div></div>`
+  ).join("");
+
+  const ordered = [...R.rows].sort((a, b) => a.implied_density - b.implied_density);
+  const codes = verdictCodes(ordered, "verdict");
+
+  const rows = ordered.map(r => `<tr${r.plausible ? "" : ' class="pending"'}>
+      <td><strong>${r.plant_id}</strong>${r.source === "measured" ? "" : "<sup>*</sup>"}</td>
+      <td>${r.pot_g.toFixed(0)}</td>
+      <td>${r.plant_g.toFixed(0)}</td>
+      <td>${r.pot_to_plant.toFixed(1)}</td>
+      <td>${r.below_rim_l.toFixed(1)}</td>
+      <td>${r.plausible ? "" : "<strong>"}${r.implied_density.toFixed(0)}${
+        r.plausible ? "" : "</strong>"}</td>
+      <td>${(r.plant_uncertainty["50g"] * 100).toFixed(0)}</td>
+      <td class="sym">${codes.get(r.verdict)}</td></tr>`).join("");
+
+  document.getElementById("pottable").innerHTML =
+    `<thead>
+       <tr>
+         <th rowspan="2" class="nospan">Specimen</th>
+         <th colspan="3" class="spanner">Recorded mass</th>
+         <th colspan="2" class="spanner">Reconstruction below the rim</th>
+         <th rowspan="2" class="nospan">Plant error at<br>50 g bias (%)</th>
+         <th rowspan="2" class="nospan sym">Note</th>
+       </tr>
+       <tr><th>Pot (g)</th><th>Plant (g)</th><th>Ratio</th>
+           <th>Volume (L)</th><th>Density (kg m<sup>&minus;3</sup>)</th></tr>
+     </thead><tbody>${rows}</tbody>`;
+
+  tableFrame("pottable",
+    `Recorded pot mass against the volume the reconstruction places below the pot
+     rim, ordered by implied bulk density. ${R.n_measured} of ${R.n_specimens}
+     pots were weighed and the remainder estimated.`,
+    `<b>*</b> pot mass estimated rather than weighed. Ratio is pot mass divided by
+     plant mass. Density is pot mass over the volume below the rim; damp growing
+     medium falls between 200 and 1000 kg m<sup>&minus;3</sup>, and values in bold
+     fall outside that band. The last column is the share of plant mass that a
+     50 g bias on each of the two weighings would represent, since plant mass is
+     recorded as their difference. ` + legendFrom(codes));
+
+  const worst = [...R.rows].sort(
+    (a, b) => b.plant_uncertainty["50g"] - a.plant_uncertainty["50g"])[0];
+  const v = document.getElementById("potverdict");
+  if (v) v.innerHTML =
+    `Across the ${cal.n} weighed pots, mass follows the reconstructed volume at
+     <strong>r = ${cal.pearson_r}</strong>, ${cal.slope_g_per_l} g per litre with a
+     residual of ${(cal.residual_rmse_g / 1000).toFixed(2)} kg, so the calibration
+     is real. It clears the E011 to E020 estimates, which land at the same density
+     as the weighed pots. It cannot be applied to the
+     ${R.n_implausible - R.n_correctable} specimens raised on a stand, which are
+     the ones that raised the question.` +
+    (worst ? ` Separately, on ${worst.plant_id} the pot is
+     ${worst.pot_to_plant.toFixed(1)} times the plant, so 50 g of scale error on
+     each weighing is <strong>${(worst.plant_uncertainty["50g"] * 100).toFixed(0)}%</strong>
+     of the plant mass before any reconstruction is attempted.` : "");
+}
+
+potMassSection();
+
+/* ------------------------------------------------------- per-stage panels
+
+   Four stages of one specimen on one camera and one grid. The point of putting
+   them side by side is the first two: on most of these captures the
+   segmentation reaches most of a metre higher than the carve does, and that gap
+   is the subject of section 7r. Two numbers in a table make it an inference; two
+   panels make it obvious. */
+const STAGE = {
+  yaw: 0.62, pitch: 0.18, zoom: 1.4, entry: null, clouds: new Map(),
+  // Display only. None of these change a number on the page; they change how
+  // easy it is to see the thing the numbers are about. A 2500-point cap means
+  // point size is doing real work: at 2 px a Mango canopy is a cloud and at 5 px
+  // it is a solid, and which of those you want depends on the question.
+  dot: 3, cmap: "viridis", mode: "z",
+};
+
+/* Where each panel's geometry comes from. This is the part the panels alone
+   cannot show: they are not five parallel methods. One is the shared input,
+   three are alternative operators on it, and one is a re-expression of another
+   panel. */
+const STAGE_LINEAGE = {
+  segmentation: "the shared input",
+  carve: "operator on the segmentation",
+  fusion: "operator on the segmentation",
+  mesh: "re-expression of the carve",
+  surface: "operator on four of the twelve views",
+};
+
+/* Which regression consumes which stage, so each panel can show the estimate
+   that stage actually produces rather than a single number repeated four times.
+   The segmentation feeds the image-only methods, the carve and the fusion feed
+   their own geometric features, and the mesh feeds the mesh descriptors. */
+const STAGE_METHOD = {
+  segmentation: "2D + profile",
+  carve: "geometric features",
+  fusion: "fused geometry",
+  mesh: "mesh geometry",
+  // The surface-voxel arm has no fitted regressor in this project, so its panel
+  // reports the implied density and the screen's verdict instead of an estimate.
+  surface: null,
+};
+
+function stageDraw(){
+  const entry = STAGE.entry;
+  if (!entry) return;
+  for (const st of entry.stages){
+    const cv = document.getElementById("stage-" + st.key);
+    const c = STAGE.clouds.get(entry.plant_id + "/" + st.key);
+    if (cv && c) draw(cv, c, {dot: STAGE.dot, mode: STAGE.mode, cmap: STAGE.cmap,
+      rim: entry.split_m != null ? entry.split_m : entry.rim_m,
+      yawL: STAGE.yaw, pitchL: STAGE.pitch, zoomL: STAGE.zoom});
+  }
+}
+
+/* A zoom that fits this specimen, shared by all five panels.
+
+   The fixed 1.4 was chosen when the panels were coloured by depth and nobody
+   was looking at the bottom of the frame. It shows about seven tenths of the
+   grid, centred, so on a tall specimen the pot sits below the canvas edge: with
+   the pot-and-plant colouring correct, E011's pot occupied nine of 173 rows and
+   the rest was cropped away. Fitting to the specimen keeps one frame across the
+   five panels, which is the property the row exists for, while putting the
+   whole plant and its pot inside it.
+
+   Yaw does not change the bound because the horizontal half-extent is taken as
+   a radius. Pitch does, so it is folded in. */
+function stageFit(){
+  const entry = STAGE.entry;
+  if (!entry) return 1.4;
+  let vHalf = 0, hHalf = 0;
+  for (const st of entry.stages){
+    const c = STAGE.clouds.get(entry.plant_id + "/" + st.key);
+    if (!c) continue;
+    for (let i = 0; i < c.n; i++){
+      const x = c.pts[i*3], y = c.pts[i*3+1], z = c.pts[i*3+2] - 0.5;
+      const r = Math.sqrt(x*x + y*y);
+      if (r > hHalf) hHalf = r;
+      const a = Math.abs(z);
+      if (a > vHalf) vHalf = a;
+    }
+  }
+  const cp = Math.abs(Math.cos(STAGE.pitch)), sp = Math.abs(Math.sin(STAGE.pitch));
+  const half = Math.max(vHalf*cp + hHalf*sp, hHalf, 1e-6);
+  return Math.max(0.4, Math.min(4.0, 0.47 / half));
+}
+
+function stageZoom(f){
+  STAGE.zoom = Math.max(0.4, Math.min(4.0, STAGE.zoom * f));
+  stageDraw();
+}
+
+async function stageSelect(entry){
+  STAGE.entry = entry;
+
+  const specimen = byId.get(entry.plant_id);
+  const predictions = (specimen && specimen.predictions) || {};
+
+  const host = document.getElementById("stagepanels");
+  host.innerHTML = entry.stages.map(st => {
+    const method = STAGE_METHOD[st.key];
+    const estimate = predictions[method];
+    const error = estimate != null ? estimate - entry.mass_kg : null;
+    return `
+    <div class="column is-one-fifth">
+      <canvas class="recon" id="stage-${st.key}"
+              style="width:100%;aspect-ratio:1;touch-action:none;cursor:grab"></canvas>
+      <p class="mt-2"><strong>${st.title}</strong><br>
+        <span class="is-size-7 has-text-grey">${st.detail}</span><br>
+        <span class="tag is-small is-light">${STAGE_LINEAGE[st.key] || ""}</span></p>
+      <p class="is-size-7">${entry.species} &middot; weighed
+        ${entry.mass_kg.toFixed(2)} kg<br>
+        ${method && estimate != null
+          ? `<strong>estimated ${estimate.toFixed(2)} kg</strong>
+             <span class="has-text-grey">(${error >= 0 ? "+" : ""}${
+               error.toFixed(2)} kg, ${method})</span>`
+          : st.density
+            ? `<strong>${st.density.toFixed(0)} kg/m&sup3;</strong>
+               <span class="tag is-small ${
+                 st.density >= 200 && st.density <= 1000 ? "is-success" : "is-light"}">${
+                 st.density >= 200 && st.density <= 1000 ? "plausible" : "outside the band"
+               }</span>`
+            : '<span class="has-text-grey">no estimate from this stage</span>'}<br>
+        <span class="has-text-grey">reaches ${st.top_m.toFixed(3)} m${
+          st.volume_l ? ` &middot; ${st.volume_l.toFixed(2)} L above the rim` : ""}</span></p>
+    </div>`;
+  }).join("");
+
+  for (const st of entry.stages){
+    const key = entry.plant_id + "/" + st.key;
+    if (!STAGE.clouds.has(key))
+      STAGE.clouds.set(key, await decodeCloud(st.cloud, key, true));
+  }
+
+  /* One camera across every panel, rebound each time because the canvases are
+     replaced when the specimen changes. */
+  for (const st of entry.stages){
+    const cv = document.getElementById("stage-" + st.key);
+    if (!cv) continue;
+    let drag = false, lx = 0, ly = 0;
+    cv.addEventListener("pointerdown", e => {
+      drag = true; lx = e.clientX; ly = e.clientY;
+      cv.setPointerCapture(e.pointerId); cv.style.cursor = "grabbing"; });
+    cv.addEventListener("pointermove", e => {
+      if (!drag) return;
+      STAGE.yaw += (e.clientX - lx) * 0.01;
+      STAGE.pitch = Math.max(-1.4, Math.min(1.4, STAGE.pitch + (e.clientY - ly) * 0.01));
+      lx = e.clientX; ly = e.clientY; stageDraw(); });
+    const stop = e => { drag = false; cv.style.cursor = "grab";
+      try { cv.releasePointerCapture(e.pointerId) } catch(_){} };
+    cv.addEventListener("pointerup", stop);
+    cv.addEventListener("pointercancel", stop);
+    cv.addEventListener("wheel", e => {
+      if (!(e.ctrlKey || e.metaKey || e.shiftKey)) return;   // let the page scroll
+      e.preventDefault(); stageZoom(e.deltaY > 0 ? 0.92 : 1.08); }, {passive: false});
+  }
+
+  const note = document.getElementById("stagenote");
+  if (note){
+    const split = entry.split_m != null ? entry.split_m : entry.rim_m;
+    note.innerHTML =
+      `${entry.plant_id}, ${entry.species}, ${entry.mass_kg.toFixed(2)} kg. Rim at
+       ${entry.rim_m.toFixed(3)} m${entry.rim_measured
+         ? "" : ", which is the configured fallback because no step was found"}.
+       Reported volume above that rim, ${entry.above_rim_l.toFixed(2)} L.
+       The pot-and-plant colouring splits at <strong>${split.toFixed(3)} m</strong>,
+       ${entry.split_source || "the detected pot rim"}, so everything above it is
+       stem and leaf.` + (entry.rim_measured ? "" :
+        ` The reported volume still counts from ${entry.rim_m.toFixed(3)} m, so on
+          this specimen it includes the stand.`);
+  }
+
+  const seg = entry.stages.find(s => s.key === "segmentation");
+  const carve = entry.stages.find(s => s.key === "carve");
+  const fusion = entry.stages.find(s => s.key === "fusion");
+  const box = document.getElementById("stagegap");
+  const body = document.getElementById("stagegapbody");
+  if (seg && carve && body){
+    const lost = seg.top_m - carve.top_m;
+    box.className = lost > 0.15 ? "message is-danger mt-3" : "message is-success mt-3";
+    body.innerHTML = lost > 0.15
+      ? `The segmentation reaches <strong>${seg.top_m.toFixed(3)} m</strong> and the
+         carve stops at <strong>${carve.top_m.toFixed(3)} m</strong>, so
+         <strong>${lost.toFixed(3)} m</strong> of plant the cameras photographed is
+         absent from the reconstruction. A stem thinner than a voxel is voted away
+         by the cameras that look past it.` +
+        (fusion ? ` Depth fusion, on the same masks and the same depth, reaches
+         <strong>${fusion.top_m.toFixed(3)} m</strong>.` : "")
+      : `The carve reaches ${carve.top_m.toFixed(3)} m against the segmentation's
+         ${seg.top_m.toFixed(3)} m, so this specimen keeps what the cameras saw.`;
+  }
+  STAGE.zoom = stageFit();
+  stageDraw();
+}
+
+async function stagesSection(){
+  const R = D.stages, section = document.getElementById("stages");
+  if (!R || !R.specimens || !R.specimens.length){ if (section) section.remove(); return; }
+
+  const pick = document.getElementById("stagepick");
+  pick.innerHTML = R.specimens.map(s =>
+    `<option value="${s.plant_id}">${s.plant_id}, ${s.species}, ${
+      s.mass_kg.toFixed(2)} kg</option>`).join("");
+  pick.onchange = () =>
+    stageSelect(R.specimens.find(s => s.plant_id === pick.value));
+
+  const zoom = document.getElementById("stagezoom");
+  if (zoom) zoom.onclick = e => {
+    const b = e.target.closest("button");
+    if (!b) return;
+    if (b.dataset.zoom === "reset"){
+      STAGE.yaw = 0.62; STAGE.pitch = 0.18; STAGE.zoom = stageFit(); stageDraw();
+    } else stageZoom(Number(b.dataset.zoom));
+  };
+
+  const display = document.getElementById("stagedisplay");
+  if (display) display.onchange = e => {
+    const t = e.target;
+    if (t.id === "stagedot")  STAGE.dot  = Number(t.value);
+    if (t.id === "stagecmap") STAGE.cmap = t.value;
+    if (t.id === "stagemode") STAGE.mode = t.value;
+    // A ramp is meaningless when the colour is categorical or flat, so the
+    // control says so rather than sitting there doing nothing.
+    const ramped = STAGE.mode === "z" || STAGE.mode === "depth";
+    document.getElementById("stagecmap").disabled = !ramped;
+    stageDraw();
+  };
+
+  addEventListener("resize", stageDraw);
+  await stageSelect(R.specimens[0]);
+}
+
+stagesSection();
+
+/* -------------------------------------------------------------- references
+
+   Grouped by the stage each work informs rather than listed alphabetically,
+   because the question a reader has here is "where did this method come from",
+   not "what is the third author's surname". */
+function referencesSection(){
+  const R = D.references, section = document.getElementById("references");
+  if (!R || !R.references || !R.references.length){
+    if (section) section.remove(); return;
+  }
+
+  const tone = {
+    "method": "is-link",
+    "metric": "is-info",
+    "method and metric": "is-info",
+    "visualisation": "is-primary",
+    "precedent": "is-warning",
+  };
+
+  const stages = [];
+  for (const r of R.references){
+    let group = stages.find(g => g.stage === r.stage);
+    if (!group){ group = {stage: r.stage, items: []}; stages.push(group); }
+    group.items.push(r);
+  }
+
+  document.getElementById("reflist").innerHTML = stages.map(group => `
+    <div class="mb-5">
+      <p class="is-size-7 has-text-grey mb-2"><strong>${group.stage}</strong></p>
+      ${group.items.map(r => `
+        <div class="mb-4">
+          <p class="mb-1">
+            ${r.arxiv
+              ? `<a href="${r.url}" target="_blank" rel="noopener"><strong>${r.title}</strong></a>`
+              : `<strong>${r.title}</strong>`}
+            <span class="tag is-small ${tone[r.relation] || "is-light"} ml-2">${r.relation}</span>
+          </p>
+          <p class="is-size-7 has-text-grey mb-1">
+            ${r.authors}, ${r.year}. ${r.venue}${r.arxiv ? `, arXiv:${r.arxiv}` : ""}.
+          </p>
+          <p class="is-size-7">${r.borrowed}</p>
+        </div>`).join("")}
+    </div>`).join("");
+
+  const bib = document.getElementById("refbibtex");
+  if (bib) bib.textContent = R.bibtex;
+}
+
+referencesSection();
+
+/* ---------------------------------------------------- methodology diagrams
+
+   SVG rather than PNG: the text in these is the substance, and an examiner
+   zooming in on one box should get type rather than pixels. They are files
+   under static/architecture, not inline markup, because the same figures go
+   into the write-up and there should be one copy of each. */
+function architectureSection(){
+  const R = D.architecture, pick = document.getElementById("archpick");
+  if (!R || !R.length || !pick){
+    const wrap = document.getElementById("archimg");
+    if (wrap) wrap.closest(".tablewrap").remove();
+    return;
+  }
+
+  pick.innerHTML = R.map((a, i) =>
+    `<option value="${i}">${a.title}</option>`).join("");
+
+  const show = () => {
+    const a = R[Number(pick.value) || 0];
+    document.getElementById("archimg").src = a.image;
+    document.getElementById("archnote").textContent =
+      `${a.subtitle}  ${a.n_stages} stages.`;
+    document.getElementById("archoutcome").innerHTML =
+      `<strong>Outcome.</strong> ${a.outcome}`;
+  };
+  pick.onchange = show;
+  show();
+}
+
+architectureSection();
+
+/* ------------------------------------------------------- the backbone arm */
+function backboneSection(){
+  const P = D.dino_probe, V = D.backbone_viz;
+  const section = document.getElementById("backbone");
+  if (!P || !P.conditions){ if (section) section.remove(); return; }
+
+  const rows = Object.entries(P.conditions)
+    .filter(([, c]) => !c.skipped)
+    .map(([label, c]) => ({label, ...c}));
+  const paired = P.paired_vs_control || {};
+
+  const best = Math.min(...rows.map(r => r.rmse_kg));
+  document.getElementById("backbonefacts").innerHTML = [
+    [`${rows.length}`, "conditions compared, all 36 specimens"],
+    [`${(best).toFixed(3)} kg`, "best RMSE, any backbone"],
+    ["none", "significantly better than the control"],
+  ].map(([n, l]) =>
+    `<div class="keyfact"><div class="num">${n}</div><div class="lab">${l}</div></div>`
+  ).join("");
+
+  document.getElementById("probetable").innerHTML =
+    `<thead>
+       <tr>
+         <th rowspan="2" class="nospan">Condition</th>
+         <th colspan="4" class="spanner">Leave-one-out error</th>
+         <th colspan="3" class="spanner">Paired against the control</th>
+       </tr>
+       <tr><th>RMSE (kg)</th><th>MAE (kg)</th><th>MARE (%)</th><th>R&sup2;</th>
+           <th>&Delta;RMSE (kg)</th><th>95% CI</th><th>p</th></tr>
+     </thead><tbody>${rows.map(r => {
+       const d = paired[r.label];
+       return `<tr${r.rmse_kg === best ? ' class="best"' : ""}>
+         <td><strong>${r.label}</strong></td>
+         <td>${r.rmse_kg.toFixed(3)}</td>
+         <td>${r.mae_kg.toFixed(3)}</td>
+         <td>${(r.mare * 100).toFixed(1)}</td>
+         <td>${r.r2.toFixed(3)}</td>
+         <td>${d ? (d.difference >= 0 ? "+" : "") + d.difference.toFixed(3) : "&mdash;"}</td>
+         <td>${d ? `[${d.low >= 0 ? "+" : ""}${d.low.toFixed(3)}, ${
+           d.high >= 0 ? "+" : ""}${d.high.toFixed(3)}]` : "&mdash;"}</td>
+         <td>${d ? d.p_direction.toFixed(2) : "&mdash;"}</td></tr>`;
+     }).join("")}</tbody>`;
+
+  tableFrame("probetable",
+    `Frozen-feature probe over all ${P.n_specimens} specimens, leave-one-out.
+     The control is the seven geometric descriptors with no DINO features.`,
+    `Every interval crosses zero, so no condition is distinguishable from the
+     control. The comparison the access unblocked is DINOv2 against DINOv3
+     directly, which is tighter than either against the control because their
+     predictions correlate at 0.977: &Delta;RMSE +0.0018 kg, 95% CI [&minus;0.025,
+     +0.030]. That bounds the difference at about 30 g on masses of 0.40 to
+     2.35 kg, against a smallest detectable effect at this sample size of
+     0.138 kg. p is the bootstrap probability that the sign is the reported one,
+     not a null-hypothesis test.`);
+
+  if (!V || !V.specimens || !V.specimens.length){
+    document.getElementById("bbpick").closest(".field").remove();
+    return;
+  }
+
+  const pick = document.getElementById("bbpick");
+  const side = document.getElementById("bbview");
+  pick.innerHTML = V.specimens.map((s, i) =>
+    `<option value="${i}">${s.plant_id}, ${s.species}, ${
+      s.mass_kg.toFixed(2)} kg</option>`).join("");
+
+  /* The side is chosen by azimuth rather than by index, and kept across
+     specimens: someone comparing two plants at the same angle should not have
+     to re-pick it each time. Falls back to the first side a specimen has if it
+     does not carry the one currently selected. */
+  let azimuth = null;
+
+  const draw = () => {
+    const s = V.specimens[Number(pick.value) || 0];
+    const angles = s.views.map(v => v.azimuth_deg);
+    if (azimuth === null || !angles.includes(azimuth)) azimuth = angles[0];
+
+    side.innerHTML = angles.map(a =>
+      `<option value="${a}"${a === azimuth ? " selected" : ""}>${a}&deg;</option>`
+    ).join("");
+
+    const index = angles.indexOf(azimuth);
+    const frame = s.views[index];
+    const tile = (src, alt) =>
+      `<img src="./static/backbone_viz/${src}" alt="${alt}" loading="lazy"
+            style="width:100%;border-radius:3px;display:block">`;
+
+    const cells = [`
+      <div class="column">
+        ${tile(frame.frame, `${s.plant_id} frame`)}
+        <p class="is-size-7 has-text-grey has-text-centered mt-1">the frame
+          &middot; ${frame.azimuth_deg}&deg;</p>
+      </div>`];
+    for (const [kind, b] of Object.entries(s.backbones)){
+      const pv = b.per_view[index] || b.per_view[0];
+      cells.push(`
+        <div class="column">
+          ${tile(pv.features, `${s.plant_id} ${kind} features`)}
+          <p class="is-size-7 has-text-grey has-text-centered mt-1">${kind}
+            &middot; ${b.patch_grid[0]}&times;${b.patch_grid[1]} patches</p>
+        </div>
+        <div class="column">
+          ${tile(b.cluster, `${s.plant_id} ${kind} clustering`)}
+          <p class="is-size-7 has-text-grey has-text-centered mt-1">${kind}
+            lifted and clustered</p>
+        </div>`);
+    }
+    document.getElementById("backbonepanels").innerHTML = cells.join("");
+
+    const parts = Object.entries(s.backbones).map(([kind, b]) => {
+      const pv = b.per_view[index] || b.per_view[0];
+      return `<strong>${kind}</strong> puts ${(b.upper_fraction * 100).toFixed(0)}%
+        of the points in the upper cluster, centred at
+        ${b.upper_mean_height_m.toFixed(2)} m, and at this angle its feature
+        foreground recovers ${(pv.recall_of_segmenter * 100).toFixed(0)}% of the
+        segmenter's own mask`;
+    });
+    document.getElementById("backbonenote").innerHTML = parts.join(". ") +
+      `. The clustering is lifted from all twelve views at once, so it is the
+       same whichever side is shown; only the feature panels change.`;
+  };
+
+  pick.onchange = draw;
+  side.onchange = e => { azimuth = Number(e.target.value); draw(); };
+  draw();
+}
+
+backboneSection();
+
+/* --------------------------------- distance metrics on the Pheno4D scans */
+function distanceMetricsSection(){
+  const R = D.recon_metrics;
+  const cap = document.getElementById("disttablecap");
+  if (!R || !R.rows || !cap) return;
+
+  const rows = R.rows.filter(r => r.carve && r.fused);
+  if (!rows.length){ cap.remove(); return; }
+
+  document.getElementById("disttable").innerHTML =
+    `<thead>
+       <tr>
+         <th rowspan="2" class="nospan">Scan</th>
+         <th colspan="3" class="spanner">Silhouette carving</th>
+         <th colspan="3" class="spanner">Depth fusion</th>
+       </tr>
+       <tr><th>Acc. (mm)</th><th>Comp. (mm)</th><th>F-score</th>
+           <th>Acc. (mm)</th><th>Comp. (mm)</th><th>F-score</th></tr>
+     </thead><tbody>${rows.map(r => `
+       <tr>
+         <td><strong>${r.scan_id}</strong></td>
+         <td>${r.carve.accuracy_mean_mm.toFixed(1)}</td>
+         <td>${r.carve.completeness_mean_mm.toFixed(1)}</td>
+         <td>${r.carve.f_score.toFixed(3)}</td>
+         <td>${r.fused.accuracy_mean_mm.toFixed(1)}</td>
+         <td>${r.fused.completeness_mean_mm.toFixed(1)}</td>
+         <td><strong>${r.fused.f_score.toFixed(3)}</strong></td>
+       </tr>`).join("")}</tbody>`;
+
+  tableFrame("disttable",
+    `Distance metrics against the laser-scanned ground truth for all
+     ${rows.length} Pheno4D scans, after the form DUSt3R reports for DTU.`,
+    `Accuracy is the mean distance from each reconstructed point to the nearest
+     true point, and completeness the reverse; the F-score counts points within
+     one voxel, a threshold fixed in advance rather than tuned. These matter
+     because overlap is a harsh test for thin structure: a stem under two voxels
+     wide, recovered one voxel across, scores near zero overlap while being
+     12 mm from correct. Fusion wins on every scan, and F-score and voxel
+     intersection over union rank the same operator first on
+     <b>${R.f_score_agrees_with_voxel_iou} of ${R.n_scans}</b>. Silhouette
+     intersection over union, which is inverted on all fourteen, now dissents
+     against three agreeing measures. These need reference geometry, so they
+     apply here and to none of the 36 captured specimens.`);
+}
+
+distanceMetricsSection();
+
+/* Numbers assigned last, from document order, so they ascend as a reader
+   meets them rather than as the scripts happened to run. */
+renumberTables();

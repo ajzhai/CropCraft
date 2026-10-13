@@ -1,0 +1,32 @@
+# Conda environment for GG-SSVT.
+#
+#   conda env create -f ggssvt/environment.yml
+#   conda activate ggssvt
+#   pip install torch==2.5.1 torchvision==0.20.1 \
+#       --index-url https://download.pytorch.org/whl/cu121
+#   python -c "import torch; print(torch.cuda.get_device_name(0))"
+#
+# Torch is installed by pip afterwards rather than listed here, because conda
+# cannot resolve the CUDA-specific wheel index. Installing torch from conda
+# defaults will silently give you a CPU build.
+#
+# This is NOT the environment for Nerfstudio. That stack pins torch 2.0.1+cu118,
+# tiny-cuda-nn and Python 3.8, which conflicts with transformers >= 4.56. Keep
+# the existing `cropcraft` environment for ns-train / ns-viewer.
+
+name: ggssvt
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip>=24
+  - numpy>=1.24,<3
+  - pillow>=10.0
+  - scikit-image>=0.22
+  - scipy>=1.11
+  - pytest>=7.0
+  - pip:
+      - transformers>=4.56
+      - huggingface_hub>=0.26
+      - safetensors>=0.4
+      - ruff>=0.6

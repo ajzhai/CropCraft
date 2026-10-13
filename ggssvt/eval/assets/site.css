@@ -1,0 +1,483 @@
+/* Adapted from the Nerfies project page template (CC BY-SA 4.0),
+   https://github.com/nerfies/nerfies.github.io -- see the footer.
+   Bulma supplies the layout; this file carries the typographic conventions the
+   template establishes plus the components this project needs on top of it. */
+
+body {
+  font-family: 'Noto Sans', sans-serif;
+}
+
+.publication-title,
+.publication-authors,
+.teaser {
+  font-family: 'Google Sans', 'Noto Sans', sans-serif;
+}
+
+.publication-authors a {
+  color: hsl(204, 86%, 53%) !important;
+}
+
+.publication-authors a:hover {
+  text-decoration: underline;
+}
+
+.author-block {
+  display: inline-block;
+}
+
+.publication-venue {
+  color: #555;
+  width: fit-content;
+  font-weight: bold;
+  /* fit-content leaves it hugging the left edge inside a centred column, and
+     Bulma 0.9's spacing helpers have no `mx-auto`, so centre it here. */
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.link-block a {
+  margin-top: 5px;
+  margin-bottom: 5px;
+}
+
+.link-block .icon svg {
+  width: 1em;
+  height: 1em;
+  fill: currentColor;
+}
+
+.footer .icon-link {
+  font-size: 25px;
+  color: #000;
+}
+
+.teaser .hero-body {
+  padding-top: 0;
+  padding-bottom: 3rem;
+}
+
+/* ------------------------------------------------------------------ *
+ * Project components
+ * ------------------------------------------------------------------ */
+
+/* Headline figures under the abstract. Bulma's own .level would work, but
+   these need to wrap on a phone rather than compress to unreadable. */
+.keyfacts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem 2.5rem;
+  justify-content: center;
+  margin: 1.5rem 0 0.5rem;
+}
+
+.keyfact {
+  text-align: center;
+  min-width: 7rem;
+}
+
+.keyfact .num {
+  font-family: 'Google Sans', 'Noto Sans', sans-serif;
+  font-size: 2rem;
+  line-height: 1.1;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.keyfact .lab {
+  font-size: 0.8rem;
+  color: #7a7a7a;
+  margin-top: 0.15rem;
+}
+
+/* The pipeline strip. */
+.stages {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0.75rem;
+}
+
+.stage {
+  border: 1px solid #dbdbdb;
+  border-radius: 6px;
+  padding: 0.75rem 0.9rem;
+  background: #fff;
+}
+
+.stage b {
+  display: block;
+  font-family: 'Google Sans', 'Noto Sans', sans-serif;
+  font-size: 0.9rem;
+}
+
+.stage span {
+  font-size: 0.8rem;
+  color: #7a7a7a;
+}
+
+/* Specimen browser. */
+.viewer {
+  display: grid;
+  grid-template-columns: 1fr 240px;
+  gap: 1.25rem;
+}
+
+@media screen and (max-width: 768px) {
+  .viewer {
+    grid-template-columns: 1fr;
+  }
+}
+
+.stagebox {
+  border: 1px solid #dbdbdb;
+  border-radius: 6px;
+  background: #fafafa;
+  position: relative;
+  overflow: hidden;
+}
+
+#stage {
+  display: block;
+  width: 100%;
+  height: 460px;
+  cursor: grab;
+}
+
+#stage:active {
+  cursor: grabbing;
+}
+
+.legend {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  font-size: 0.75rem;
+  color: #4a4a4a;
+  background: rgba(255, 255, 255, 0.85);
+  border-radius: 4px;
+  padding: 4px 8px;
+}
+
+.legend i {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  margin-right: 4px;
+  vertical-align: -1px;
+}
+
+/* The specimen list is long; it scrolls rather than pushing the page down. */
+.specimens {
+  max-height: 500px;
+  overflow-y: auto;
+  border: 1px solid #dbdbdb;
+  border-radius: 6px;
+}
+
+.specimens button {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid #f0f0f0;
+  background: #fff;
+  padding: 0.5rem 0.7rem;
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+  text-align: left;
+}
+
+.specimens button:hover {
+  background: #f5f5f5;
+}
+
+.specimens button[aria-current="true"] {
+  background: #f0f6ff;
+  font-weight: 600;
+}
+
+.specimens button .mass {
+  color: #7a7a7a;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.8rem;
+}
+
+/* A dot carrying the plausibility verdict, so the list itself shows the result. */
+.verdict {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: 0;
+}
+
+.verdict.plausible { background: #23d160; }
+.verdict.envelope  { background: #ffdd57; }
+.verdict.missing   { background: #ff3860; }
+.verdict.unknown   { background: #dbdbdb; }
+
+.facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 0.6rem;
+  margin-top: 0.9rem;
+}
+
+.fact {
+  border: 1px solid #dbdbdb;
+  border-radius: 6px;
+  padding: 0.5rem 0.65rem;
+}
+
+.fact b {
+  display: block;
+  font-variant-numeric: tabular-nums;
+  font-size: 1.05rem;
+  font-family: 'Google Sans', 'Noto Sans', sans-serif;
+}
+
+.fact span {
+  font-size: 0.72rem;
+  color: #7a7a7a;
+}
+
+.slices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 0.6rem;
+  margin-top: 1rem;
+}
+
+.slice {
+  border: 1px solid #dbdbdb;
+  border-radius: 6px;
+  padding: 0.4rem;
+  text-align: center;
+}
+
+.slice canvas {
+  display: block;
+  width: 100%;
+  height: 84px;
+}
+
+.slice span {
+  font-size: 0.7rem;
+  color: #7a7a7a;
+}
+
+/* Tables. Bulma styles them; these keep wide ones from breaking the layout. */
+.tablewrap {
+  overflow-x: auto;
+}
+
+table.data {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.87rem;
+  font-variant-numeric: tabular-nums;
+}
+
+table.data th,
+table.data td {
+  padding: 0.45rem 0.6rem;
+  border-bottom: 1px solid #ededed;
+  text-align: right;
+  white-space: nowrap;
+}
+
+table.data th:first-child,
+table.data td:first-child {
+  text-align: left;
+}
+
+table.data th {
+  font-family: 'Google Sans', 'Noto Sans', sans-serif;
+  font-weight: 600;
+  color: #4a4a4a;
+  border-bottom: 2px solid #dbdbdb;
+}
+
+table.data tr.best td {
+  font-weight: 700;
+}
+
+.muted {
+  color: #7a7a7a;
+}
+
+.caption {
+  font-size: 0.85rem;
+  color: #7a7a7a;
+  margin-top: 0.5rem;
+}
+
+/* Controls row above the viewer. */
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  align-items: center;
+  margin-bottom: 0.9rem;
+}
+
+.controls .buttons {
+  margin-bottom: 0;
+}
+
+.controls .button {
+  margin-bottom: 0;
+}
+
+/* ------------------------------------------------------------------ *
+ * Viridis. Perceptually uniform, monotonic in lightness, and readable
+ * in greyscale or with colour-vision deficiency, which the previous
+ * green-and-brown pairing was not.
+ *
+ * The canvas code reads these through getComputedStyle, so this block is
+ * the single source of truth for the CSS and the point-cloud rendering
+ * alike. The ten stops are the standard viridis anchors; the renderer
+ * interpolates between them.
+ * ------------------------------------------------------------------ */
+:root {
+  --v0: #440154;
+  --v1: #482878;
+  --v2: #3e4989;
+  --v3: #31688e;
+  --v4: #26828e;
+  --v5: #1f9e89;
+  --v6: #35b779;
+  --v7: #6ece58;
+  --v8: #b5de2b;
+  --v9: #fde725;
+
+  /* Categorical roles, taken from the same ramp so the page stays one family.
+     Sequential colour cannot encode a two-way split on its own, so these are
+     picked far enough apart to read as distinct rather than as an ordering. */
+  --pot:    var(--v1);
+  --canopy: var(--v7);
+  --ink-3:  #b5b5b5;
+}
+
+/* The verdict dots stay outside viridis on purpose: green/amber/red is a
+   status convention readers already have, and borrowing the data palette for
+   it would suggest the three verdicts sit on a continuum. They do not. */
+
+/* Method toggle. Grouped by what actually differs between the entries: the
+   mask, the number of views, or the pose estimate. */
+#segmenter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.25rem;
+}
+
+.methodgroup {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.methodgroup .grouplabel {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #9a9a9a;
+}
+
+.methodgroup .button {
+  margin-bottom: 0;
+}
+
+.methodgroup .buttons {
+  margin-bottom: 0;
+}
+
+/* The depth legend is a continuous ramp, so it gets a bar rather than a swatch. */
+.legend i.ramp {
+  width: 60px;
+  height: 8px;
+  border-radius: 2px;
+  margin: 0 4px;
+}
+
+/* Experiment log. Pending rows are dimmed so the eye lands on what has run,
+   while stale rows keep full contrast because they are the ones to act on. */
+#progress td { vertical-align: top; text-align: left; }
+#progress tr.pending td { opacity: 0.62; }
+#progress code {
+  background: #f5f5f5;
+  padding: 0.1rem 0.3rem;
+  border-radius: 3px;
+  word-break: break-all;
+  white-space: normal;
+}
+
+/* ---------------------------------------------------------- research tables
+
+   Booktabs, near enough: a rule above, a rule under the header, a rule at the
+   foot, and nothing else. Vertical rules and per-row lines are what make a web
+   table look like a spreadsheet, and a dissertation examiner reads a spreadsheet
+   as unfinished. Everything a reader needs to interpret the numbers travels with
+   the table itself: a numbered caption above it, units in the column heads
+   rather than repeated down the rows, and a note beneath carrying the legend for
+   any coded column. */
+.tablecap {
+  font-family: 'Google Sans', 'Noto Sans', sans-serif;
+  font-size: 0.86rem;
+  line-height: 1.45;
+  color: #363636;
+  margin: 1.6rem 0 0.5rem;
+}
+
+.tablecap .num { font-weight: 700; }
+
+.tablenote {
+  font-size: 0.78rem;
+  line-height: 1.55;
+  color: #7a7a7a;
+  margin-top: 0.5rem;
+  max-width: 62rem;
+}
+
+.tablenote b { color: #4a4a4a; font-weight: 600; }
+
+table.data.booktabs {
+  border-top: 1.5px solid #363636;
+  border-bottom: 1.5px solid #363636;
+}
+
+table.data.booktabs th {
+  border-bottom: 1px solid #363636;
+  color: #363636;
+}
+
+/* A spanner sits over a group of columns and takes a lighter rule, so the
+   header reads as two levels rather than two competing rules. */
+table.data.booktabs th.spanner {
+  text-align: center;
+  font-weight: 600;
+  border-bottom: 1px solid #dbdbdb;
+}
+
+table.data.booktabs th.nospan { border-bottom: none; }
+
+table.data.booktabs td { border-bottom: none; }
+
+table.data.booktabs tbody tr:hover td { background: #fafafa; }
+
+/* The coded column: a letter, centred, explained in the note. Prose repeated
+   down thirty rows is not a column, it is a paragraph in disguise. */
+table.data.booktabs th.sym,
+table.data.booktabs td.sym {
+  text-align: center;
+  color: #4a4a4a;
+  font-weight: 600;
+  width: 2.5rem;
+}
+
+table.data.booktabs tbody tr.divider td {
+  border-top: 1px solid #dbdbdb;
+}

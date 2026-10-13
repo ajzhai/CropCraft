@@ -1,0 +1,14 @@
+{
+  "camA_000": {"rgb": "images/camA_000.png", "depth": "depth/camA_000.png"},
+  "camB_180": {"rgb": "images/camB_180.png", "depth": "depth/camB_180.png"},
+  "camA_030": {"rgb": "images/camA_030.png", "depth": "depth/camA_030.png"},
+  "camB_210": {"rgb": "images/camB_210.png", "depth": "depth/camB_210.png"},
+  "camA_060": {"rgb": "images/camA_060.png", "depth": "depth/camA_060.png"},
+  "camB_240": {"rgb": "images/camB_240.png", "depth": "depth/camB_240.png"},
+  "camA_090": {"rgb": "images/camA_090.png", "depth": "depth/camA_090.png"},
+  "camB_270": {"rgb": "images/camB_270.png", "depth": "depth/camB_270.png"},
+  "camA_120": {"rgb": "images/camA_120.png", "depth": "depth/camA_120.png"},
+  "camB_300": {"rgb": "images/camB_300.png", "depth": "depth/camB_300.png"},
+  "camA_150": {"rgb": "images/camA_150.png", "depth": "depth/camA_150.png"},
+  "camB_330": {"rgb": "images/camB_330.png", "depth": "depth/camB_330.png"}
+}

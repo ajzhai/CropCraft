@@ -1,4 +1,13 @@
-data/
+# The downloaded soybean/maize scenes, at the repository root only.
+#
+# Anchored with a leading slash on purpose. A bare `data/` matches at EVERY
+# depth, which silently excluded two source packages that happen to be named
+# `data`: ggssvt/data/ (the loaders) and nerfstudio/nerfstudio/data/ (the
+# dataparsers). Both were absent from fresh clones and failed at import with
+# "No module named ...data", which looks like a broken install rather than a
+# missing commit. Keep the slash.
+/data/
+/dataset_kinect_stationary/
 preds/
 wandb/
 work_dirs/
@@ -163,3 +172,25 @@ cython_debug/
 #  and can be added to the global gitignore or merged into this file.  For a more nuclear
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
+# Pose-free backends: upstream clones and their isolated environment.
+# DUSt3R and MASt3R ship no setup.py, so they live on sys.path from here
+# rather than being pip-installed; see ggssvt/POSEFREE.md.
+/third_party/
+/.venv-posefree/
+
+# Paper build: node_modules only. The generator scripts are tracked.
+/paper/node_modules/
+/paper/package-lock.json
+/paper/package.json
+/paper/*.docx
+/paper/*.pptx
+
+# Personal contact details for the proposals. candidate.example.json is
+# tracked; the real values live beside it and never leave this machine.
+/paper/candidate.local.json
+
+# The 4TU lettuce set (DOI 10.4121/15023088), ~1 GB. Downloaded, not vendored.
+/dataset_biomass/
+
+# Pheno4D (Bonn), ~12 GB of laser point clouds. Downloaded, not vendored.
+/dataset_pheno4d/

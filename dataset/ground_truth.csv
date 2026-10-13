@@ -1,0 +1,43 @@
+plant_id,date,species_breed,total_fresh_weight_with_pot_g,pot_weight_g,net_weight_g,pot_weight_source,notes
+M001,2026-07-23,Mango,1450.0,710.0,740.0,estimated,
+M002,2026-07-23,Mango,2050.0,850.0,1200.0,estimated,
+M003,2026-07-24,Mango,2210.0,1050.0,1160.0,estimated,
+M004,2026-07-24,Mango,1360.0,650.0,710.0,estimated,
+M005,2026-07-24,Mango,1850.0,960.0,890.0,estimated,
+M006,2026-07-24,Mango,2010.0,900.0,1110.0,estimated,
+M007,2026-07-24,Mango,2150.0,970.0,1180.0,estimated,
+M008,2026-07-24,Mango,1160.0,600.0,560.0,estimated,
+M009,2026-07-24,Mango,2700.0,1230.0,1470.0,estimated,
+M010,2026-07-24,Mango,2350.0,1150.0,1200.0,estimated,
+E001,2026-07-31,Eucalyptus,1950.0,1400.0,550.0,estimated,
+E002,2026-07-31,Eucalyptus,1800.0,1200.0,600.0,estimated,
+E003,2026-07-31,Eucalyptus,1350.0,900.0,450.0,estimated,
+E004,2026-07-31,Eucalyptus,1750.0,1050.0,700.0,estimated,
+E005,2026-07-31,Eucalyptus,1300.0,900.0,400.0,estimated,
+E006,2026-07-31,Eucalyptus,1500.0,990.0,510.0,estimated,
+E007,2026-07-31,Eucalyptus,1800.0,1180.0,620.0,estimated,
+E008,2026-07-31,Eucalyptus',1880.0,1180.0,700.0,estimated,
+E009,2026-07-31,Eucalyptus,1400.0,960.0,440.0,estimated,
+E010,2026-07-31,Eucalyptus,1150.0,740.0,410.0,estimated,
+X001,2026-08-05,Xylem,1000.0,800.0,200.0,estimated,
+E011,2026-08-05,Eucalyptus,3900.0,1680.0,2220.0,estimated,
+E012,2026-08-05,Eucalyptus,2750.0,1500.0,1250.0,estimated,
+E013,2026-08-05,Eucalyptus,3950.0,1600.0,2350.0,estimated,
+E014,2026-08-05,Eucalyptus,3350.0,1550.0,1800.0,estimated,
+E015,2026-08-05,Eucalyptus,3000.0,1650.0,1350.0,estimated,
+E016,2026-08-05,Eucalyptus,3200.0,1700.0,1500.0,estimated,
+E017,2026-08-05,Eucalyptus,3050.0,1600.0,1450.0,estimated,
+E018,2026-08-05,Eucalyptus,3250.0,1570.0,1680.0,estimated,
+E019,2026-08-05,Eucalyptus,4000.0,2050.0,1950.0,estimated,
+E020,2026-08-05,Eucalyptus,4150.0,2200.0,1950.0,estimated,
+V001,2026-08-14,Eucalyptus,25400.0,24400.0,1000.0,measured,pot weighed after shoot removal
+V002,2026-08-14,Eucalyptus,23700.0,23200.0,500.0,measured,pot weighed after shoot removal
+V003,2026-08-14,Eucalyptus,20500.0,19400.0,1100.0,measured,pot weighed after shoot removal
+V004,2026-08-14,Eucalyptus,32200.0,30400.0,1800.0,measured,pot weighed after shoot removal
+V005,2026-08-14,Eucalyptus,22400.0,20600.0,1800.0,measured,pot weighed after shoot removal
+V006,2026-08-14,Eucalyptus,22300.0,21300.0,1000.0,measured,pot weighed after shoot removal
+V007,2026-08-14,Eucalyptus,33800.0,32500.0,1300.0,measured,pot weighed after shoot removal
+V008,2026-08-14,Eucalyptus,22300.0,21700.0,600.0,measured,pot weighed after shoot removal
+V009,2026-08-26,Eucalyptus,20700.0,18900.0,1800.0,measured,pot weighed after shoot removal
+V010,2026-08-26,Eucalyptus,31900.0,30000.0,1900.0,measured,pot weighed after shoot removal
+V011,2026-08-26,Eucalyptus,22700.0,21900.0,800.0,measured,"pot weighed after shoot removal; capture incomplete, 9 of 12 views"

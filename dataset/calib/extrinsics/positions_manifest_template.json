@@ -1,0 +1,14 @@
+{
+  "camA_000": {"camera": "camA", "image": "2026-07-23/positions/camA_000.jpg"},
+  "camB_180": {"camera": "camB", "image": "2026-07-23/positions/camB_180.jpg"},
+  "camA_030": {"camera": "camA", "image": "2026-07-23/positions/camA_030.jpg"},
+  "camB_210": {"camera": "camB", "image": "2026-07-23/positions/camB_210.jpg"},
+  "camA_060": {"camera": "camA", "image": "2026-07-23/positions/camA_060.jpg"},
+  "camB_240": {"camera": "camB", "image": "2026-07-23/positions/camB_240.jpg"},
+  "camA_090": {"camera": "camA", "image": "2026-07-23/positions/camA_090.jpg"},
+  "camB_270": {"camera": "camB", "image": "2026-07-23/positions/camB_270.jpg"},
+  "camA_120": {"camera": "camA", "image": "2026-07-23/positions/camA_120.jpg"},
+  "camB_300": {"camera": "camB", "image": "2026-07-23/positions/camB_300.jpg"},
+  "camA_150": {"camera": "camA", "image": "2026-07-23/positions/camA_150.jpg"},
+  "camB_330": {"camera": "camB", "image": "2026-07-23/positions/camB_330.jpg"}
+}
